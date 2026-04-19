@@ -1,16 +1,34 @@
+using Ivren.Core.Contracts;
+using Ivren.Core.Services;
+
 namespace Ivren.WinForms;
 
 static class Program
 {
-    /// <summary>
-    ///  The main entry point for the application.
-    /// </summary>
     [STAThread]
     static void Main()
     {
-        // To customize application configuration such as set high DPI settings or default font,
-        // see https://aka.ms/applicationconfiguration.
         ApplicationConfiguration.Initialize();
-        Application.Run(new Form1());
-    }    
+
+        var processor = BuildProcessor();
+        Application.Run(new MainForm(processor));
+    }
+
+    private static IInvoiceFileProcessor BuildProcessor()
+    {
+        var pdfAnalysisService = new PdfAnalysisService();
+        var xmlInvoiceDataExtractor = new XmlInvoiceDataExtractor();
+        var textExtractionService = new PdfTextExtractionService();
+        var invoiceNumberDetector = new InvoiceNumberDetector();
+        var filenameSanitizer = new WindowsFilenameSanitizer();
+        var fileRenameService = new FileRenameService();
+
+        return new InvoiceFileProcessor(
+            pdfAnalysisService,
+            xmlInvoiceDataExtractor,
+            textExtractionService,
+            invoiceNumberDetector,
+            filenameSanitizer,
+            fileRenameService);
+    }
 }

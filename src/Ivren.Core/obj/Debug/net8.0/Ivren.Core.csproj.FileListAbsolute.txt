@@ -1,0 +1,11 @@
+C:\repo\ivren\src\Ivren.Core\bin\Debug\net8.0\Ivren.Core.deps.json
+C:\repo\ivren\src\Ivren.Core\bin\Debug\net8.0\Ivren.Core.dll
+C:\repo\ivren\src\Ivren.Core\bin\Debug\net8.0\Ivren.Core.pdb
+C:\repo\ivren\src\Ivren.Core\obj\Debug\net8.0\Ivren.Core.GeneratedMSBuildEditorConfig.editorconfig
+C:\repo\ivren\src\Ivren.Core\obj\Debug\net8.0\Ivren.Core.AssemblyInfoInputs.cache
+C:\repo\ivren\src\Ivren.Core\obj\Debug\net8.0\Ivren.Core.AssemblyInfo.cs
+C:\repo\ivren\src\Ivren.Core\obj\Debug\net8.0\Ivren.Core.csproj.CoreCompileInputs.cache
+C:\repo\ivren\src\Ivren.Core\obj\Debug\net8.0\Ivren.Core.dll
+C:\repo\ivren\src\Ivren.Core\obj\Debug\net8.0\refint\Ivren.Core.dll
+C:\repo\ivren\src\Ivren.Core\obj\Debug\net8.0\Ivren.Core.pdb
+C:\repo\ivren\src\Ivren.Core\obj\Debug\net8.0\ref\Ivren.Core.dll
