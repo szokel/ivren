@@ -24,6 +24,10 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         @"[A-Z0-9][A-Z0-9/\-_.]{5,}",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
+    private static readonly Regex LabeledInvoiceNumberRegex = new(
+        @"(?:invoice\s*number|invoice\s*no|szamlaszam|szamla\s*sorszama|szamla\s*szama|sorszam)[^A-Z0-9]{0,50}(?<value>[A-Z0-9/\-_.]{6,})",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
     public InvoiceNumberDetectionResult DetectFromXml(XmlInvoiceExtractionResult xmlExtractionResult)
     {
         ArgumentNullException.ThrowIfNull(xmlExtractionResult);
@@ -93,7 +97,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                     "Invoice number detected from labeled PDF text.");
             }
 
-            if (!LooksLikeInvoiceLabel(normalized))
+            if (!LooksLikeFocusedInvoiceLabel(normalized))
             {
                 continue;
             }
@@ -112,7 +116,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
 
         var regexMatch = Regex.Match(
             NormalizeForComparison(textExtractionResult.FullText),
-            @"(?:invoice\s*number|invoice\s*no|szamlaszam|szamla\s*szama|sorszam)[^A-Z0-9]{0,50}(?<value>[A-Z0-9/\-_.]{6,})",
+            @"(?:invoice\s*number|invoice\s*no|szamlaszam|szamla\s*sorszama|szamla\s*szama|sorszam)[^A-Z0-9]{0,50}(?<value>[A-Z0-9/\-_.]{6,})",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         if (regexMatch.Success)
@@ -148,23 +152,45 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
             return false;
         }
 
-        var match = InvoiceCandidateRegex.Match(token);
+        var match = LabeledInvoiceNumberRegex.Match(normalizedToken);
         if (!match.Success)
         {
             invoiceNumber = string.Empty;
             return false;
         }
 
-        invoiceNumber = CleanCandidate(match.Value);
-        return !string.IsNullOrWhiteSpace(invoiceNumber);
+        invoiceNumber = CleanCandidate(match.Groups["value"].Value);
+        foreach (Match rawCandidateMatch in InvoiceCandidateRegex.Matches(token))
+        {
+            var rawCandidate = CleanCandidate(rawCandidateMatch.Value);
+            if (string.IsNullOrWhiteSpace(rawCandidate) || !rawCandidate.Any(char.IsDigit))
+            {
+                continue;
+            }
+
+            invoiceNumber = rawCandidate;
+            break;
+        }
+
+        return !string.IsNullOrWhiteSpace(invoiceNumber)
+            && invoiceNumber.Any(char.IsDigit);
     }
 
     private static bool LooksLikeInvoiceLabel(string normalizedToken)
         => normalizedToken.Contains("invoice number", StringComparison.Ordinal)
             || normalizedToken.Contains("invoice no", StringComparison.Ordinal)
             || normalizedToken.Contains("szamlaszam", StringComparison.Ordinal)
+            || normalizedToken.Contains("szamla sorszama", StringComparison.Ordinal)
             || normalizedToken.Contains("szamla szama", StringComparison.Ordinal)
             || normalizedToken.Contains("sorszam", StringComparison.Ordinal);
+
+    private static bool LooksLikeFocusedInvoiceLabel(string normalizedToken)
+        => normalizedToken.StartsWith("invoice number", StringComparison.Ordinal)
+            || normalizedToken.StartsWith("invoice no", StringComparison.Ordinal)
+            || normalizedToken.StartsWith("szamlaszam", StringComparison.Ordinal)
+            || normalizedToken.StartsWith("szamla sorszama", StringComparison.Ordinal)
+            || normalizedToken.StartsWith("szamla szama", StringComparison.Ordinal)
+            || normalizedToken.StartsWith("sorszam", StringComparison.Ordinal);
 
     private static bool TryReadCandidateValue(string rawValue, out string invoiceNumber)
     {

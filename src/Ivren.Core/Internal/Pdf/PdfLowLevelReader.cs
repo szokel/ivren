@@ -23,6 +23,70 @@ internal sealed class PdfLowLevelReader
         @"/EF\s+(?<object>\d+)\s+(?<generation>\d+)\s+R",
         RegexOptions.Compiled);
 
+    private static readonly Regex FilterArrayRegex = new(
+        @"/Filter\s*\[(?<value>.*?)\]",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
+    private static readonly Regex FilterNameRegex = new(
+        @"/(?<name>[A-Za-z0-9#]+)",
+        RegexOptions.Compiled);
+
+    private static readonly Regex PageContentsReferenceRegex = new(
+        @"/Contents\s+(?<object>\d+)\s+(?<generation>\d+)\s+R",
+        RegexOptions.Compiled);
+
+    private static readonly Regex PageContentsArrayRegex = new(
+        @"/Contents\s*\[(?<value>.*?)\]",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
+    private static readonly Regex FontResourceRegex = new(
+        @"/Font\s*<<(?<value>.*?)>>",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
+    private static readonly Regex FontAliasReferenceRegex = new(
+        @"/(?<alias>F\d+)\s+(?<object>\d+)\s+(?<generation>\d+)\s+R",
+        RegexOptions.Compiled);
+
+    private static readonly Regex ToUnicodeReferenceRegex = new(
+        @"/ToUnicode\s+(?<object>\d+)\s+(?<generation>\d+)\s+R",
+        RegexOptions.Compiled);
+
+    private static readonly Regex FontSelectionRegex = new(
+        @"/(?<alias>F\d+)\s+[-+]?\d*\.?\d+\s+Tf",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
+    private static readonly Regex LiteralTextOperatorRegex = new(
+        @"\((?<value>(?:\\.|[^\\)])*)\)\s*(?:Tj|'|"")",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
+    private static readonly Regex HexTextOperatorRegex = new(
+        @"<(?<value>[0-9A-Fa-f]+)>\s*Tj",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
+    private static readonly Regex ArrayTextOperatorRegex = new(
+        @"\[(?<value>.*?)\]\s*TJ",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
+    private static readonly Regex BfCharSectionRegex = new(
+        @"beginbfchar(?<value>.*?)endbfchar",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
+    private static readonly Regex BfRangeSectionRegex = new(
+        @"beginbfrange(?<value>.*?)endbfrange",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
+    private static readonly Regex BfCharEntryRegex = new(
+        @"<(?<source>[0-9A-Fa-f]+)>\s*<(?<target>[0-9A-Fa-f]+)>",
+        RegexOptions.Compiled);
+
+    private static readonly Regex BfRangeSimpleEntryRegex = new(
+        @"<(?<start>[0-9A-Fa-f]+)>\s*<(?<end>[0-9A-Fa-f]+)>\s*<(?<target>[0-9A-Fa-f]+)>",
+        RegexOptions.Compiled);
+
+    private static readonly Regex BfRangeArrayEntryRegex = new(
+        @"<(?<start>[0-9A-Fa-f]+)>\s*<(?<end>[0-9A-Fa-f]+)>\s*\[(?<targets>.*?)\]",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
     public PdfReadResult Read(string filePath)
     {
         var bytes = File.ReadAllBytes(filePath);
@@ -115,25 +179,284 @@ internal sealed class PdfLowLevelReader
     private static List<string> ReadTextTokens(IReadOnlyDictionary<int, PdfObjectData> objects)
     {
         var tokens = new List<string>();
+        var pageObjects = objects.Values
+            .Where(static x => x.Body.Contains("/Type /Page", StringComparison.Ordinal))
+            .ToArray();
 
-        foreach (var pdfObject in objects.Values)
+        foreach (var pageObject in pageObjects)
         {
-            var stream = TryReadStream(pdfObject, objects);
+            var pageFonts = ReadPageFonts(pageObject.Body, objects);
+
+            foreach (var contentObjectNumber in ReadContentObjectNumbers(pageObject.Body))
+            {
+                if (!objects.TryGetValue(contentObjectNumber, out var contentObject))
+                {
+                    continue;
+                }
+
+                var stream = TryReadStream(contentObject, objects);
+                if (stream is null)
+                {
+                    continue;
+                }
+
+                var decodedText = Encoding.Latin1.GetString(stream.Value.DecodedBytes);
+                tokens.AddRange(ExtractPageTextTokens(decodedText, pageFonts));
+            }
+        }
+
+        return tokens;
+    }
+
+    private static IReadOnlyDictionary<string, Dictionary<string, string>> ReadPageFonts(
+        string pageBody,
+        IReadOnlyDictionary<int, PdfObjectData> objects)
+    {
+        var result = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+        var fontDictionaryMatch = FontResourceRegex.Match(pageBody);
+        if (!fontDictionaryMatch.Success)
+        {
+            return result;
+        }
+
+        foreach (Match match in FontAliasReferenceRegex.Matches(fontDictionaryMatch.Groups["value"].Value))
+        {
+            var alias = match.Groups["alias"].Value;
+            var fontObjectNumber = int.Parse(match.Groups["object"].Value, CultureInfo.InvariantCulture);
+            if (!objects.TryGetValue(fontObjectNumber, out var fontObject))
+            {
+                continue;
+            }
+
+            var toUnicodeMatch = ToUnicodeReferenceRegex.Match(fontObject.Body);
+            if (!toUnicodeMatch.Success)
+            {
+                continue;
+            }
+
+            var toUnicodeObjectNumber = int.Parse(toUnicodeMatch.Groups["object"].Value, CultureInfo.InvariantCulture);
+            if (!objects.TryGetValue(toUnicodeObjectNumber, out var toUnicodeObject))
+            {
+                continue;
+            }
+
+            var stream = TryReadStream(toUnicodeObject, objects);
             if (stream is null)
             {
                 continue;
             }
 
-            var decodedText = Encoding.Latin1.GetString(stream.Value.DecodedBytes);
-            if (!LooksLikeTextContentStream(decodedText))
+            var cmapText = Encoding.Latin1.GetString(stream.Value.DecodedBytes);
+            result[alias] = ParseToUnicodeMap(cmapText);
+        }
+
+        return result;
+    }
+
+    private static IEnumerable<int> ReadContentObjectNumbers(string pageBody)
+    {
+        foreach (Match match in PageContentsReferenceRegex.Matches(pageBody))
+        {
+            yield return int.Parse(match.Groups["object"].Value, CultureInfo.InvariantCulture);
+        }
+
+        var arrayMatch = PageContentsArrayRegex.Match(pageBody);
+        if (!arrayMatch.Success)
+        {
+            yield break;
+        }
+
+        foreach (Match match in Regex.Matches(arrayMatch.Groups["value"].Value, @"(?<object>\d+)\s+(?<generation>\d+)\s+R"))
+        {
+            yield return int.Parse(match.Groups["object"].Value, CultureInfo.InvariantCulture);
+        }
+    }
+
+    private static IReadOnlyList<string> ExtractPageTextTokens(
+        string decodedStream,
+        IReadOnlyDictionary<string, Dictionary<string, string>> fontMaps)
+    {
+        if (!LooksLikeTextContentStream(decodedStream))
+        {
+            return Array.Empty<string>();
+        }
+
+        var tokens = new List<string>();
+        var currentFontAlias = string.Empty;
+
+        var operationRegex = new Regex(
+            @"/(?<fontAlias>F\d+)\s+[-+]?\d*\.?\d+\s+Tf|\((?<literal>(?:\\.|[^\\)])*)\)\s*(?<literalOperator>Tj|'|"")|<(?<hex>[0-9A-Fa-f]+)>\s*Tj|\[(?<array>.*?)\]\s*TJ",
+            RegexOptions.Compiled | RegexOptions.Singleline);
+
+        foreach (Match match in operationRegex.Matches(decodedStream))
+        {
+            if (match.Groups["fontAlias"].Success)
+            {
+                currentFontAlias = match.Groups["fontAlias"].Value;
+                continue;
+            }
+
+            if (match.Groups["literal"].Success)
+            {
+                PdfTextTokenExtractor.AddToken(tokens, PdfTextTokenExtractor.DecodePdfLiteralString(match.Groups["literal"].Value));
+                continue;
+            }
+
+            if (match.Groups["hex"].Success)
+            {
+                PdfTextTokenExtractor.AddToken(tokens, DecodeHexText(match.Groups["hex"].Value, currentFontAlias, fontMaps));
+                continue;
+            }
+
+            if (match.Groups["array"].Success)
+            {
+                AddArrayTextTokens(tokens, match.Groups["array"].Value, currentFontAlias, fontMaps);
+            }
+        }
+
+        return tokens;
+    }
+
+    private static void AddArrayTextTokens(
+        ICollection<string> tokens,
+        string arrayValue,
+        string currentFontAlias,
+        IReadOnlyDictionary<string, Dictionary<string, string>> fontMaps)
+    {
+        foreach (Match literal in LiteralTextOperatorRegex.Matches(arrayValue))
+        {
+            PdfTextTokenExtractor.AddToken(tokens, PdfTextTokenExtractor.DecodePdfLiteralString(literal.Groups["value"].Value));
+        }
+
+        foreach (Match hex in Regex.Matches(arrayValue, @"<(?<value>[0-9A-Fa-f]+)>"))
+        {
+            PdfTextTokenExtractor.AddToken(tokens, DecodeHexText(hex.Groups["value"].Value, currentFontAlias, fontMaps));
+        }
+    }
+
+    private static string DecodeHexText(
+        string hexValue,
+        string currentFontAlias,
+        IReadOnlyDictionary<string, Dictionary<string, string>> fontMaps)
+    {
+        if (fontMaps.TryGetValue(currentFontAlias, out var unicodeMap) && unicodeMap.Count > 0)
+        {
+            return DecodeWithUnicodeMap(hexValue, unicodeMap);
+        }
+
+        return PdfTextTokenExtractor.DecodePdfHexString(hexValue);
+    }
+
+    private static Dictionary<string, string> ParseToUnicodeMap(string cmapText)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (Match section in BfCharSectionRegex.Matches(cmapText))
+        {
+            foreach (Match entry in BfCharEntryRegex.Matches(section.Groups["value"].Value))
+            {
+                map[entry.Groups["source"].Value.ToUpperInvariant()] = DecodeUnicodeHex(entry.Groups["target"].Value);
+            }
+        }
+
+        foreach (Match section in BfRangeSectionRegex.Matches(cmapText))
+        {
+            foreach (Match entry in BfRangeSimpleEntryRegex.Matches(section.Groups["value"].Value))
+            {
+                var start = Convert.ToInt32(entry.Groups["start"].Value, 16);
+                var end = Convert.ToInt32(entry.Groups["end"].Value, 16);
+                var target = Convert.ToInt32(entry.Groups["target"].Value, 16);
+                var sourceWidth = entry.Groups["start"].Value.Length;
+                var targetWidth = entry.Groups["target"].Value.Length;
+
+                for (var source = start; source <= end; source++)
+                {
+                    var sourceHex = source.ToString($"X{sourceWidth}", CultureInfo.InvariantCulture);
+                    var targetHex = target.ToString($"X{targetWidth}", CultureInfo.InvariantCulture);
+                    map[sourceHex] = DecodeUnicodeHex(targetHex);
+                    target++;
+                }
+            }
+
+            foreach (Match entry in BfRangeArrayEntryRegex.Matches(section.Groups["value"].Value))
+            {
+                var start = Convert.ToInt32(entry.Groups["start"].Value, 16);
+                var targets = Regex.Matches(entry.Groups["targets"].Value, @"<(?<target>[0-9A-Fa-f]+)>")
+                    .Select(static x => x.Groups["target"].Value)
+                    .ToArray();
+
+                for (var index = 0; index < targets.Length; index++)
+                {
+                    var sourceHex = (start + index).ToString($"X{entry.Groups["start"].Value.Length}", CultureInfo.InvariantCulture);
+                    map[sourceHex] = DecodeUnicodeHex(targets[index]);
+                }
+            }
+        }
+
+        return map;
+    }
+
+    private static string DecodeWithUnicodeMap(string hexValue, IReadOnlyDictionary<string, string> unicodeMap)
+    {
+        var keyLengths = unicodeMap.Keys
+            .Select(static x => x.Length)
+            .Distinct()
+            .OrderByDescending(static x => x)
+            .ToArray();
+
+        var normalizedHex = hexValue.ToUpperInvariant();
+        var builder = new StringBuilder();
+
+        for (var index = 0; index < normalizedHex.Length;)
+        {
+            var matched = false;
+
+            foreach (var keyLength in keyLengths)
+            {
+                if (index + keyLength > normalizedHex.Length)
+                {
+                    continue;
+                }
+
+                var segment = normalizedHex.Substring(index, keyLength);
+                if (!unicodeMap.TryGetValue(segment, out var value))
+                {
+                    continue;
+                }
+
+                builder.Append(value);
+                index += keyLength;
+                matched = true;
+                break;
+            }
+
+            if (matched)
             {
                 continue;
             }
 
-            tokens.AddRange(PdfTextTokenExtractor.ExtractTokens(decodedText));
+            var fallbackLength = Math.Min(2, normalizedHex.Length - index);
+            builder.Append(PdfTextTokenExtractor.DecodePdfHexString(normalizedHex.Substring(index, fallbackLength)));
+            index += fallbackLength;
         }
 
-        return tokens;
+        return builder.ToString();
+    }
+
+    private static string DecodeUnicodeHex(string hexValue)
+    {
+        if (hexValue.Length % 4 != 0)
+        {
+            return PdfTextTokenExtractor.DecodePdfHexString(hexValue);
+        }
+
+        var bytes = new byte[hexValue.Length / 2];
+        for (var index = 0; index < hexValue.Length; index += 2)
+        {
+            bytes[index / 2] = byte.Parse(hexValue.Substring(index, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+        }
+
+        return Encoding.BigEndianUnicode.GetString(bytes);
     }
 
     private static string GetEmbeddedFileDictionary(string body)
@@ -200,9 +523,10 @@ internal sealed class PdfLowLevelReader
 
     private static bool LooksLikeTextContentStream(string value)
         => value.Contains("BT", StringComparison.Ordinal)
-            && (value.Contains("Tj", StringComparison.Ordinal)
+            && value.Contains("ET", StringComparison.Ordinal)
+            && (value.Contains("Tf", StringComparison.Ordinal)
+                || value.Contains("Tj", StringComparison.Ordinal)
                 || value.Contains("TJ", StringComparison.Ordinal)
-                || value.Contains("'", StringComparison.Ordinal)
                 || value.Contains("\"", StringComparison.Ordinal));
 
     private static PdfStreamData? TryReadStream(PdfObjectData pdfObject, IReadOnlyDictionary<int, PdfObjectData> objects)
@@ -285,23 +609,147 @@ internal sealed class PdfLowLevelReader
 
     private static byte[] DecodeStream(byte[] rawBytes, string body)
     {
-        if (!body.Contains("/FlateDecode", StringComparison.Ordinal))
+        var filters = ReadFilters(body);
+        if (filters.Count == 0)
         {
             return rawBytes;
         }
 
+        var currentBytes = rawBytes;
+        foreach (var filter in filters)
+        {
+            try
+            {
+                currentBytes = filter switch
+                {
+                    "FlateDecode" => DecodeFlate(currentBytes),
+                    "ASCII85Decode" => DecodeAscii85(currentBytes),
+                    _ => currentBytes
+                };
+            }
+            catch (InvalidDataException)
+            {
+                return rawBytes;
+            }
+            catch (FormatException)
+            {
+                return rawBytes;
+            }
+        }
+
+        return currentBytes;
+    }
+
+    private static IReadOnlyList<string> ReadFilters(string body)
+    {
+        var arrayMatch = FilterArrayRegex.Match(body);
+        if (arrayMatch.Success)
+        {
+            return FilterNameRegex.Matches(arrayMatch.Groups["value"].Value)
+                .Select(static x => x.Groups["name"].Value)
+                .ToArray();
+        }
+
+        var singleMatch = Regex.Match(body, @"/Filter\s*/(?<name>[A-Za-z0-9#]+)", RegexOptions.Singleline);
+        if (singleMatch.Success)
+        {
+            return [singleMatch.Groups["name"].Value];
+        }
+
+        return Array.Empty<string>();
+    }
+
+    private static byte[] DecodeFlate(byte[] rawBytes)
+    {
         using var input = new MemoryStream(rawBytes);
         using var output = new MemoryStream();
+        using var zlibStream = new ZLibStream(input, CompressionMode.Decompress);
+        zlibStream.CopyTo(output);
+        return output.ToArray();
+    }
 
-        try
+    private static byte[] DecodeAscii85(byte[] rawBytes)
+    {
+        var data = Encoding.ASCII.GetString(rawBytes);
+        var cleaned = new StringBuilder(data.Length);
+
+        foreach (var character in data)
         {
-            using var zlibStream = new ZLibStream(input, CompressionMode.Decompress);
-            zlibStream.CopyTo(output);
-            return output.ToArray();
+            if (!char.IsWhiteSpace(character))
+            {
+                cleaned.Append(character);
+            }
         }
-        catch (InvalidDataException)
+
+        var text = cleaned.ToString();
+        var endIndex = text.IndexOf("~>", StringComparison.Ordinal);
+        if (endIndex >= 0)
         {
-            return rawBytes;
+            text = text[..endIndex];
+        }
+
+        using var output = new MemoryStream();
+        var chunk = new List<char>(5);
+
+        foreach (var character in text)
+        {
+            if (character == 'z')
+            {
+                if (chunk.Count != 0)
+                {
+                    throw new FormatException("Invalid ASCII85 data.");
+                }
+
+                output.Write([0, 0, 0, 0]);
+                continue;
+            }
+
+            if (character is < '!' or > 'u')
+            {
+                continue;
+            }
+
+            chunk.Add(character);
+            if (chunk.Count != 5)
+            {
+                continue;
+            }
+
+            WriteAscii85Chunk(output, chunk, 4);
+            chunk.Clear();
+        }
+
+        if (chunk.Count > 0)
+        {
+            var originalCount = chunk.Count;
+            while (chunk.Count < 5)
+            {
+                chunk.Add('u');
+            }
+
+            WriteAscii85Chunk(output, chunk, originalCount - 1);
+        }
+
+        return output.ToArray();
+    }
+
+    private static void WriteAscii85Chunk(Stream output, IReadOnlyList<char> chunk, int bytesToWrite)
+    {
+        uint value = 0;
+        for (var index = 0; index < 5; index++)
+        {
+            value = checked(value * 85 + (uint)(chunk[index] - '!'));
+        }
+
+        Span<byte> buffer = stackalloc byte[4];
+        buffer[0] = (byte)(value >> 24);
+        buffer[1] = (byte)(value >> 16);
+        buffer[2] = (byte)(value >> 8);
+        buffer[3] = (byte)value;
+
+        for (var index = 0; index < bytesToWrite; index++)
+        {
+            output.WriteByte(buffer[index]);
         }
     }
 

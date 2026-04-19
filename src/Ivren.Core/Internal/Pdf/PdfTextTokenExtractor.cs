@@ -122,7 +122,7 @@ internal static class PdfTextTokenExtractor
         return builder.ToString();
     }
 
-    private static string DecodePdfHexString(string value)
+    public static string DecodePdfHexString(string value)
     {
         if (value.Length % 2 != 0)
         {
@@ -138,7 +138,24 @@ internal static class PdfTextTokenExtractor
         return Encoding.Latin1.GetString(bytes);
     }
 
-    private static void AddToken(ICollection<string> tokens, string value)
+    public static IReadOnlyList<string> ExtractArraySegments(string value)
+    {
+        var tokens = new List<string>();
+
+        foreach (Match literal in LiteralItemRegex.Matches(value))
+        {
+            AddToken(tokens, DecodePdfLiteralString(literal.Groups["value"].Value));
+        }
+
+        foreach (Match hex in HexItemRegex.Matches(value))
+        {
+            AddToken(tokens, DecodePdfHexString(hex.Groups["value"].Value));
+        }
+
+        return tokens;
+    }
+
+    public static void AddToken(ICollection<string> tokens, string value)
     {
         var normalized = value.Replace("\r", " ", StringComparison.Ordinal)
             .Replace("\n", " ", StringComparison.Ordinal)
