@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Ivren.WinForms")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+d369a442031db8f63b387f7edb70ecae09d6da43")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+afd872d6880e1692e09d45ca84ed4b6d140b8443")]
 [assembly: System.Reflection.AssemblyProductAttribute("Ivren.WinForms")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Ivren.WinForms")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

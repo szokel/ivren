@@ -61,10 +61,10 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
             }
 
             var fallback = InvoiceCandidateRegex.Match(document.Content);
-            if (fallback.Success)
+            if (fallback.Success && TryReadCandidateValue(fallback.Value, out var xmlFallbackCandidate))
             {
                 return InvoiceNumberDetectionResult.Found(
-                    fallback.Value,
+                    xmlFallbackCandidate,
                     DetectionSource.Xml,
                     $"Invoice number candidate detected from XML content fallback in {document.SourceName}.");
             }
@@ -121,10 +121,14 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
 
         if (regexMatch.Success)
         {
-            return InvoiceNumberDetectionResult.Found(
-                regexMatch.Groups["value"].Value,
-                DetectionSource.Text,
-                "Invoice number detected from the extracted PDF text using fallback pattern matching.");
+            var fallbackCandidate = CleanCandidate(regexMatch.Groups["value"].Value);
+            if (IsValidInvoiceNumberCandidate(fallbackCandidate))
+            {
+                return InvoiceNumberDetectionResult.Found(
+                    fallbackCandidate,
+                    DetectionSource.Text,
+                    "Invoice number detected from the extracted PDF text using fallback pattern matching.");
+            }
         }
 
         return InvoiceNumberDetectionResult.NotFound(DetectionSource.Text, "No invoice number could be detected from selectable PDF text.");
@@ -163,7 +167,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         foreach (Match rawCandidateMatch in InvoiceCandidateRegex.Matches(token))
         {
             var rawCandidate = CleanCandidate(rawCandidateMatch.Value);
-            if (string.IsNullOrWhiteSpace(rawCandidate) || !rawCandidate.Any(char.IsDigit))
+            if (!IsValidInvoiceNumberCandidate(rawCandidate))
             {
                 continue;
             }
@@ -172,8 +176,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
             break;
         }
 
-        return !string.IsNullOrWhiteSpace(invoiceNumber)
-            && invoiceNumber.Any(char.IsDigit);
+        return IsValidInvoiceNumberCandidate(invoiceNumber);
     }
 
     private static bool LooksLikeInvoiceLabel(string normalizedToken)
@@ -202,9 +205,12 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         }
 
         invoiceNumber = CleanCandidate(match.Value);
-        return !string.IsNullOrWhiteSpace(invoiceNumber)
-            && invoiceNumber.Any(char.IsDigit);
+        return IsValidInvoiceNumberCandidate(invoiceNumber);
     }
+
+    private static bool IsValidInvoiceNumberCandidate(string? invoiceNumber)
+        => !string.IsNullOrWhiteSpace(invoiceNumber)
+            && invoiceNumber.Any(char.IsDigit);
 
     private static string CleanCandidate(string value)
         => value.Trim().Trim(':', ';', ',', '.', '-', '_', '/', '\\');
