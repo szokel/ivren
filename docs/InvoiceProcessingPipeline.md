@@ -12,6 +12,78 @@ The application is designed with these principles:
 - Text extraction is the secondary fallback path.
 - OCR is planned for later and is not yet implemented.
 
+## Pipeline Diagram
+
+```text
++-------------------+
+| Input PDF file    |
++-------------------+
+          |
+          v
++-------------------------------+
+| PDF analysis / structure read |
+| - objects / streams           |
+| - embedded files              |
+| - text tokens                 |
++-------------------------------+
+          |
+          v
++-------------------+
+| Embedded XML path |
++-------------------+
+          |
+          v
++-------------------------------+
+| XML discovery                 |
+| - Filespec / EF              |
+| - FileAttachment             |
+| - ObjStm-expanded objects    |
++-------------------------------+
+          |
+          v
++-------------------------------+
+| XML decode + parse            |
+| - parse from raw bytes        |
+| - respect BOM / declaration   |
++-------------------------------+
+          |
+          v
++-------------------------------+
+| Invoice number from XML?      |
++-------------------------------+
+      | yes               | no
+      v                   v
++----------------+   +-------------------+
+| Sanitize name  |   | Text extraction   |
++----------------+   +-------------------+
+      |                   |
+      |                   v
+      |         +-----------------------+
+      |         | Text normalization    |
+      |         +-----------------------+
+      |                   |
+      |                   v
+      |         +-----------------------+
+      |         | Invoice number        |
+      |         | detection from text   |
+      |         +-----------------------+
+      |                   |
+      |             yes   |   no
+      |                   v
+      |           +---------------------+
+      |           | Final failure       |
+      |           | - no rename         |
+      |           | - report reason     |
+      |           +---------------------+
+      |
+      v
++-------------------------------+
+| Rename decision               |
+| - dry-run: skip rename        |
+| - live: rename to invoice no. |
++-------------------------------+
+```
+
 ## Detection Priority Order
 
 Current processing order for each PDF:
