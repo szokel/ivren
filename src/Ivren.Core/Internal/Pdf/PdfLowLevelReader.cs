@@ -19,6 +19,10 @@ internal sealed class PdfLowLevelReader
         @"/(?<key>F|UF)\s+(?<object>\d+)\s+(?<generation>\d+)\s+R",
         RegexOptions.Compiled);
 
+    private static readonly Regex FileSpecObjectReferenceRegex = new(
+        @"/FS\s+(?<object>\d+)\s+(?<generation>\d+)\s+R",
+        RegexOptions.Compiled);
+
     private static readonly Regex DirectEmbeddedFileReferenceRegex = new(
         @"/EF\s+(?<object>\d+)\s+(?<generation>\d+)\s+R",
         RegexOptions.Compiled);
@@ -131,22 +135,28 @@ internal sealed class PdfLowLevelReader
     {
         var fileSpecs = new Dictionary<int, string>(capacity: objects.Count);
 
-        foreach (var pdfObject in objects.Values.Where(static x => x.Body.Contains("/Type /Filespec", StringComparison.Ordinal)))
+        foreach (var pdfObject in objects.Values)
         {
-            var fileName = ReadPdfStringValue(pdfObject.Body, "UF")
-                ?? ReadPdfStringValue(pdfObject.Body, "F");
+            if (LooksLikeFileSpec(pdfObject.Body))
+            {
+                AddEmbeddedFileReferencesFromFileSpec(pdfObject.Body, objects, fileSpecs);
+            }
 
-            if (string.IsNullOrWhiteSpace(fileName))
+            if (!LooksLikeFileAttachmentAnnotation(pdfObject.Body))
             {
                 continue;
             }
 
-            foreach (var objectNumber in ReadEmbeddedFileReferenceNumbers(pdfObject.Body))
+            AddEmbeddedFileReferencesFromFileSpec(pdfObject.Body, objects, fileSpecs);
+
+            foreach (var fileSpecObjectNumber in ReadFileSpecObjectReferenceNumbers(pdfObject.Body))
             {
-                foreach (var resolvedObjectNumber in ResolveEmbeddedFileObjectNumbers(objectNumber, objects))
+                if (!objects.TryGetValue(fileSpecObjectNumber, out var fileSpecObject))
                 {
-                    fileSpecs[resolvedObjectNumber] = fileName;
+                    continue;
                 }
+
+                AddEmbeddedFileReferencesFromFileSpec(fileSpecObject.Body, objects, fileSpecs);
             }
         }
 
@@ -174,6 +184,29 @@ internal sealed class PdfLowLevelReader
         }
 
         return files;
+    }
+
+    private static void AddEmbeddedFileReferencesFromFileSpec(
+        string fileSpecBody,
+        IReadOnlyDictionary<int, PdfObjectData> objects,
+        IDictionary<int, string> fileSpecs)
+    {
+        var fileName = ReadPdfStringValue(fileSpecBody, "UF")
+            ?? ReadPdfStringValue(fileSpecBody, "F")
+            ?? ReadPdfStringValue(fileSpecBody, "Contents");
+
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return;
+        }
+
+        foreach (var objectNumber in ReadEmbeddedFileReferenceNumbers(fileSpecBody))
+        {
+            foreach (var resolvedObjectNumber in ResolveEmbeddedFileObjectNumbers(objectNumber, objects))
+            {
+                fileSpecs[resolvedObjectNumber] = fileName;
+            }
+        }
     }
 
     private static List<string> ReadTextTokens(IReadOnlyDictionary<int, PdfObjectData> objects)
@@ -271,6 +304,12 @@ internal sealed class PdfLowLevelReader
             yield return int.Parse(match.Groups["object"].Value, CultureInfo.InvariantCulture);
         }
     }
+
+    private static bool LooksLikeFileSpec(string body)
+        => Regex.IsMatch(body, @"/Type\s*/Filespec\b", RegexOptions.Singleline);
+
+    private static bool LooksLikeFileAttachmentAnnotation(string body)
+        => Regex.IsMatch(body, @"/Subtype\s*/FileAttachment\b", RegexOptions.Singleline);
 
     private static IReadOnlyList<string> ExtractPageTextTokens(
         string decodedStream,
@@ -485,6 +524,14 @@ internal sealed class PdfLowLevelReader
         }
     }
 
+    private static IEnumerable<int> ReadFileSpecObjectReferenceNumbers(string body)
+    {
+        foreach (Match reference in FileSpecObjectReferenceRegex.Matches(body))
+        {
+            yield return int.Parse(reference.Groups["object"].Value, CultureInfo.InvariantCulture);
+        }
+    }
+
     private static IEnumerable<int> ResolveEmbeddedFileObjectNumbers(int objectNumber, IReadOnlyDictionary<int, PdfObjectData> objects)
     {
         if (!objects.TryGetValue(objectNumber, out var pdfObject))
@@ -506,13 +553,37 @@ internal sealed class PdfLowLevelReader
 
     private static string? ReadPdfStringValue(string body, string key)
     {
-        var match = Regex.Match(body, $@"/{key}\s+\((?<value>(?:\\.|[^\\)])*)\)", RegexOptions.Singleline);
-        if (!match.Success)
+        var literalMatch = Regex.Match(body, $@"/{key}\s*\((?<value>(?:\\.|[^\\)])*)\)", RegexOptions.Singleline);
+        if (literalMatch.Success)
         {
-            return null;
+            return DecodePdfTextString(PdfTextTokenExtractor.DecodePdfLiteralString(literalMatch.Groups["value"].Value));
         }
 
-        return PdfTextTokenExtractor.DecodePdfLiteralString(match.Groups["value"].Value);
+        var hexMatch = Regex.Match(body, $@"/{key}\s*<(?<value>[0-9A-Fa-f]+)>", RegexOptions.Singleline);
+        return hexMatch.Success
+            ? DecodePdfTextString(PdfTextTokenExtractor.DecodePdfHexString(hexMatch.Groups["value"].Value))
+            : null;
+    }
+
+    private static string DecodePdfTextString(string value)
+    {
+        if (value.Length < 2)
+        {
+            return value;
+        }
+
+        var bytes = value.Select(static character => (byte)character).ToArray();
+        if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
+        {
+            return Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
+        }
+
+        if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+        {
+            return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
+        }
+
+        return value;
     }
 
     private static string? ReadNameValue(string body, string key)

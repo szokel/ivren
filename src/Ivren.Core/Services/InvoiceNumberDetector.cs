@@ -23,6 +23,18 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         "szamlaazonosito"
     ];
 
+    private static readonly string[] XmlAttributeCandidates =
+    [
+        "invoicenumber",
+        "invoice_no",
+        "invoiceno",
+        "szamlaszam",
+        "szlaszam",
+        "szamla_sorszam",
+        "sorszam",
+        "szamlaazonosito"
+    ];
+
     private static readonly Regex InvoiceCandidateRegex = new(
         @"[A-Z0-9][A-Z0-9/\-_.]{5,}",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
@@ -68,6 +80,28 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                         invoiceNumber,
                         DetectionSource.Xml,
                         $"Invoice number detected from XML element '{match.Name.LocalName}' in {document.SourceName}.");
+                }
+            }
+
+            foreach (var candidateName in XmlAttributeCandidates)
+            {
+                var match = xDocument.Descendants()
+                    .Attributes()
+                    .FirstOrDefault(attribute => NormalizeForComparison(attribute.Name.LocalName) == candidateName
+                        && TryReadCandidateValue(attribute.Value, out _));
+
+                if (match is null)
+                {
+                    continue;
+                }
+
+                var invoiceNumber = CleanCandidate(match.Value);
+                if (!string.IsNullOrWhiteSpace(invoiceNumber))
+                {
+                    return InvoiceNumberDetectionResult.Found(
+                        invoiceNumber,
+                        DetectionSource.Xml,
+                        $"Invoice number detected from XML attribute '{match.Name.LocalName}' in {document.SourceName}.");
                 }
             }
 
