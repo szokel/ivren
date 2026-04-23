@@ -7,6 +7,7 @@ namespace Ivren.WinForms;
 public partial class MainForm : Form
 {
     private const string SettingsFileName = "Ivren.WinForms.settings.json";
+    private const string UserStateFileName = "Ivren.WinForms.user.json";
     private readonly IInvoiceFileProcessor _invoiceFileProcessor;
 
     public MainForm(IInvoiceFileProcessor invoiceFileProcessor)
@@ -16,7 +17,7 @@ public partial class MainForm : Form
         InitializeComponent();
         ConfigureResultsGrid();
         folderPathTextBox.TextChanged += (_, _) => UpdateProcessFolderButtonState();
-        InitializeDefaultFolder();
+        InitializeStartupFolder();
         UpdateProcessFolderButtonState();
     }
 
@@ -86,7 +87,7 @@ public partial class MainForm : Form
 
         if (dialog.ShowDialog(this) == DialogResult.OK)
         {
-            ApplySelectedFolder(dialog.SelectedPath);
+            ApplySelectedFolder(dialog.SelectedPath, persistUserState: true);
         }
     }
 
@@ -132,7 +133,12 @@ public partial class MainForm : Form
             return;
         }
 
-        folderPathTextBox.Text = Path.GetDirectoryName(dialog.FileName) ?? folderPathTextBox.Text;
+        var selectedFolder = Path.GetDirectoryName(dialog.FileName);
+        if (!string.IsNullOrWhiteSpace(selectedFolder))
+        {
+            ApplySelectedFolder(selectedFolder, persistUserState: true);
+        }
+
         await ProcessFilesAsync([dialog.FileName], "Processing one selected PDF file.");
     }
 
@@ -198,8 +204,19 @@ public partial class MainForm : Form
         logTextBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
     }
 
-    private void InitializeDefaultFolder()
+    private void InitializeStartupFolder()
     {
+        if (TryLoadUserState(out var userState)
+            && !string.IsNullOrWhiteSpace(userState.LastUsedFolder)
+            && Directory.Exists(userState.LastUsedFolder))
+        {
+            ApplySelectedFolder(
+                userState.LastUsedFolder,
+                persistUserState: false,
+                logMessage: $"Using last used folder: {userState.LastUsedFolder}");
+            return;
+        }
+
         if (!TryLoadStartupSettings(out var settings))
         {
             folderPathTextBox.Clear();
@@ -223,13 +240,21 @@ public partial class MainForm : Form
             return;
         }
 
-        ApplySelectedFolder(settings.DefaultFolder);
+        ApplySelectedFolder(
+            settings.DefaultFolder,
+            persistUserState: false,
+            logMessage: $"Using default folder: {settings.DefaultFolder}");
     }
 
-    private void ApplySelectedFolder(string folderPath)
+    private void ApplySelectedFolder(string folderPath, bool persistUserState, string? logMessage = null)
     {
         folderPathTextBox.Text = folderPath;
-        AppendLog($"Folder selected: {folderPath}");
+        AppendLog(logMessage ?? $"Folder selected: {folderPath}");
+
+        if (persistUserState)
+        {
+            TrySaveUserState(new UserState { LastUsedFolder = folderPath });
+        }
     }
 
     private bool TryLoadStartupSettings(out StartupSettings settings)
@@ -268,6 +293,76 @@ public partial class MainForm : Form
         }
     }
 
+    private bool TryLoadUserState(out UserState userState)
+    {
+        var userStatePath = GetUserStateFilePath();
+        if (!File.Exists(userStatePath))
+        {
+            userState = new UserState();
+            return false;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(userStatePath);
+            userState = JsonSerializer.Deserialize<UserState>(json) ?? new UserState();
+            return true;
+        }
+        catch (JsonException)
+        {
+            AppendLog($"User-state file is not valid JSON: {userStatePath}");
+            userState = new UserState();
+            return false;
+        }
+        catch (IOException)
+        {
+            AppendLog($"User-state file could not be read: {userStatePath}");
+            userState = new UserState();
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            AppendLog($"User-state file could not be accessed: {userStatePath}");
+            userState = new UserState();
+            return false;
+        }
+    }
+
+    private void TrySaveUserState(UserState userState)
+    {
+        var userStatePath = GetUserStateFilePath();
+
+        try
+        {
+            var directoryPath = Path.GetDirectoryName(userStatePath);
+            if (!string.IsNullOrWhiteSpace(directoryPath))
+            {
+                Directory.CreateDirectory(directoryPath);
+            }
+
+            var json = JsonSerializer.Serialize(userState, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            File.WriteAllText(userStatePath, json);
+        }
+        catch (IOException)
+        {
+            AppendLog($"User-state file could not be written: {userStatePath}");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            AppendLog($"User-state file could not be accessed for writing: {userStatePath}");
+        }
+    }
+
+    private static string GetUserStateFilePath()
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        return Path.Combine(localAppData, "Ivren", UserStateFileName);
+    }
+
     private void UpdateProcessFolderButtonState()
     {
         processFolderButton.Enabled = Directory.Exists(folderPathTextBox.Text.Trim());
@@ -285,5 +380,10 @@ public partial class MainForm : Form
     private sealed class StartupSettings
     {
         public string? DefaultFolder { get; init; }
+    }
+
+    private sealed class UserState
+    {
+        public string? LastUsedFolder { get; init; }
     }
 }
