@@ -9,6 +9,9 @@ namespace Ivren.Core.Services;
 
 public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
 {
+    private const string InvoiceLabelPattern =
+        @"invoice\s*number|invoice\s*no|szamlaszam|szamla\s*sorszama|sz\s*mla\s*sorsz\s*ma|szamla\s*szama|sz\s*mla\s*sz\s*ma|sorszam";
+
     private static readonly string[] XmlElementCandidates =
     [
         "invoicenumber",
@@ -25,7 +28,15 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private static readonly Regex LabeledInvoiceNumberRegex = new(
-        @"(?:invoice\s*number|invoice\s*no|szamlaszam|szamla\s*sorszama|szamla\s*szama|sorszam)[^A-Z0-9]{0,50}(?<value>[A-Z0-9/\-_.]{6,})",
+        $@"(?:{InvoiceLabelPattern})[^A-Z0-9]{{0,50}}(?<value>[A-Z0-9/\-_.]{{6,}})",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly Regex InvoiceLabelRegex = new(
+        $@"(?:{InvoiceLabelPattern})",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly Regex FocusedInvoiceLabelRegex = new(
+        $@"^(?:{InvoiceLabelPattern})",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     public InvoiceNumberDetectionResult DetectFromXml(XmlInvoiceExtractionResult xmlExtractionResult)
@@ -116,7 +127,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
 
         var regexMatch = Regex.Match(
             NormalizeForComparison(textExtractionResult.FullText),
-            @"(?:invoice\s*number|invoice\s*no|szamlaszam|szamla\s*sorszama|szamla\s*szama|sorszam)[^A-Z0-9]{0,50}(?<value>[A-Z0-9/\-_.]{6,})",
+            $@"(?:{InvoiceLabelPattern})[^A-Z0-9]{{0,50}}(?<value>[A-Z0-9/\-_.]{{6,}})",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         if (regexMatch.Success)
@@ -127,7 +138,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                 return InvoiceNumberDetectionResult.Found(
                     fallbackCandidate,
                     DetectionSource.Text,
-                    "Invoice number detected from the extracted PDF text using fallback pattern matching.");
+                    "Invoice number detected from label-linked extracted PDF text using fallback pattern matching.");
             }
         }
 
@@ -180,20 +191,10 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
     }
 
     private static bool LooksLikeInvoiceLabel(string normalizedToken)
-        => normalizedToken.Contains("invoice number", StringComparison.Ordinal)
-            || normalizedToken.Contains("invoice no", StringComparison.Ordinal)
-            || normalizedToken.Contains("szamlaszam", StringComparison.Ordinal)
-            || normalizedToken.Contains("szamla sorszama", StringComparison.Ordinal)
-            || normalizedToken.Contains("szamla szama", StringComparison.Ordinal)
-            || normalizedToken.Contains("sorszam", StringComparison.Ordinal);
+        => InvoiceLabelRegex.IsMatch(normalizedToken);
 
     private static bool LooksLikeFocusedInvoiceLabel(string normalizedToken)
-        => normalizedToken.StartsWith("invoice number", StringComparison.Ordinal)
-            || normalizedToken.StartsWith("invoice no", StringComparison.Ordinal)
-            || normalizedToken.StartsWith("szamlaszam", StringComparison.Ordinal)
-            || normalizedToken.StartsWith("szamla sorszama", StringComparison.Ordinal)
-            || normalizedToken.StartsWith("szamla szama", StringComparison.Ordinal)
-            || normalizedToken.StartsWith("sorszam", StringComparison.Ordinal);
+        => FocusedInvoiceLabelRegex.IsMatch(normalizedToken);
 
     private static bool TryReadCandidateValue(string rawValue, out string invoiceNumber)
     {
@@ -222,10 +223,19 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
 
         foreach (var character in normalized)
         {
-            if (CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark)
+            var category = CharUnicodeInfo.GetUnicodeCategory(character);
+            if (category == UnicodeCategory.NonSpacingMark)
             {
-                builder.Append(character);
+                continue;
             }
+
+            if (char.IsControl(character))
+            {
+                builder.Append(' ');
+                continue;
+            }
+
+            builder.Append(character);
         }
 
         var cleaned = builder.ToString().Normalize(NormalizationForm.FormC).ToLowerInvariant();
