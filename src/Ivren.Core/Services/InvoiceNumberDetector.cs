@@ -147,7 +147,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                 continue;
             }
 
-            for (var offset = 1; offset <= 3 && index + offset < textExtractionResult.Tokens.Count; offset++)
+            for (var offset = 1; offset <= 4 && index + offset < textExtractionResult.Tokens.Count; offset++)
             {
                 if (TryReadCandidateValue(textExtractionResult.Tokens[index + offset], out var candidate))
                 {
@@ -156,6 +156,14 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                         DetectionSource.Text,
                         "Invoice number detected from text near an invoice label.");
                 }
+            }
+
+            if (TryReadCandidateValueFromAdjacentTokens(textExtractionResult.Tokens, index + 1, 4, out var adjacentCandidate))
+            {
+                return InvoiceNumberDetectionResult.Found(
+                    adjacentCandidate,
+                    DetectionSource.Text,
+                    "Invoice number detected from adjacent text fragments near an invoice label.");
             }
         }
 
@@ -241,6 +249,30 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
 
         invoiceNumber = CleanCandidate(match.Value);
         return IsValidInvoiceNumberCandidate(invoiceNumber);
+    }
+
+    private static bool TryReadCandidateValueFromAdjacentTokens(
+        IReadOnlyList<string> tokens,
+        int startIndex,
+        int maxTokenCount,
+        out string invoiceNumber)
+    {
+        var builder = new StringBuilder();
+
+        for (var offset = 0; offset < maxTokenCount && startIndex + offset < tokens.Count; offset++)
+        {
+            builder.Append(tokens[startIndex + offset]);
+
+            if (!TryReadCandidateValue(builder.ToString(), out invoiceNumber))
+            {
+                continue;
+            }
+
+            return true;
+        }
+
+        invoiceNumber = string.Empty;
+        return false;
     }
 
     private static bool IsValidInvoiceNumberCandidate(string? invoiceNumber)

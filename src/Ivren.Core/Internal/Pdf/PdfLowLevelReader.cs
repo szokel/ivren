@@ -299,7 +299,7 @@ internal sealed class PdfLowLevelReader
     {
         var tokens = new List<string>();
         var pageObjects = objects.Values
-            .Where(static x => x.Body.Contains("/Type /Page", StringComparison.Ordinal))
+            .Where(static x => LooksLikePageObject(x.Body))
             .ToArray();
 
         foreach (var pageObject in pageObjects)
@@ -330,45 +330,48 @@ internal sealed class PdfLowLevelReader
     }
 
     private static IReadOnlyDictionary<string, Dictionary<string, string>> ReadPageFonts(
-        string pageBody,
+        string resourceOwnerBody,
         IReadOnlyDictionary<int, PdfObjectData> objects)
     {
         var result = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
-        var fontDictionaryMatch = FontResourceRegex.Match(pageBody);
-        if (!fontDictionaryMatch.Success)
+        foreach (var resourceBody in ReadResourceBodies(resourceOwnerBody, objects))
         {
-            return result;
-        }
-
-        foreach (Match match in FontAliasReferenceRegex.Matches(fontDictionaryMatch.Groups["value"].Value))
-        {
-            var alias = match.Groups["alias"].Value;
-            var fontObjectNumber = int.Parse(match.Groups["object"].Value, CultureInfo.InvariantCulture);
-            if (!objects.TryGetValue(fontObjectNumber, out var fontObject))
+            var fontDictionaryMatch = FontResourceRegex.Match(resourceBody);
+            if (!fontDictionaryMatch.Success)
             {
                 continue;
             }
 
-            var toUnicodeMatch = ToUnicodeReferenceRegex.Match(fontObject.Body);
-            if (!toUnicodeMatch.Success)
+            foreach (Match match in FontAliasReferenceRegex.Matches(fontDictionaryMatch.Groups["value"].Value))
             {
-                continue;
-            }
+                var alias = match.Groups["alias"].Value;
+                var fontObjectNumber = int.Parse(match.Groups["object"].Value, CultureInfo.InvariantCulture);
+                if (!objects.TryGetValue(fontObjectNumber, out var fontObject))
+                {
+                    continue;
+                }
 
-            var toUnicodeObjectNumber = int.Parse(toUnicodeMatch.Groups["object"].Value, CultureInfo.InvariantCulture);
-            if (!objects.TryGetValue(toUnicodeObjectNumber, out var toUnicodeObject))
-            {
-                continue;
-            }
+                var toUnicodeMatch = ToUnicodeReferenceRegex.Match(fontObject.Body);
+                if (!toUnicodeMatch.Success)
+                {
+                    continue;
+                }
 
-            var stream = TryReadStream(toUnicodeObject, objects);
-            if (stream is null)
-            {
-                continue;
-            }
+                var toUnicodeObjectNumber = int.Parse(toUnicodeMatch.Groups["object"].Value, CultureInfo.InvariantCulture);
+                if (!objects.TryGetValue(toUnicodeObjectNumber, out var toUnicodeObject))
+                {
+                    continue;
+                }
 
-            var cmapText = Encoding.Latin1.GetString(stream.Value.DecodedBytes);
-            result[alias] = ParseToUnicodeMap(cmapText);
+                var stream = TryReadStream(toUnicodeObject, objects);
+                if (stream is null)
+                {
+                    continue;
+                }
+
+                var cmapText = Encoding.Latin1.GetString(stream.Value.DecodedBytes);
+                result[alias] = ParseToUnicodeMap(cmapText);
+            }
         }
 
         return result;
@@ -495,6 +498,9 @@ internal sealed class PdfLowLevelReader
 
     private static bool LooksLikeFileAttachmentAnnotation(string body)
         => Regex.IsMatch(body, @"/Subtype\s*/FileAttachment\b", RegexOptions.Singleline);
+
+    private static bool LooksLikePageObject(string body)
+        => Regex.IsMatch(body, @"/Type\s*/Page\b", RegexOptions.Singleline);
 
     private static bool LooksLikeFormXObject(string body)
         => Regex.IsMatch(body, @"/Type\s*/XObject\b", RegexOptions.Singleline)
