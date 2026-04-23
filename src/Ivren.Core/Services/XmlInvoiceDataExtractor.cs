@@ -72,7 +72,8 @@ public sealed class XmlInvoiceDataExtractor : IXmlInvoiceDataExtractor
                 stream,
                 new XmlReaderSettings
                 {
-                    DtdProcessing = DtdProcessing.Prohibit,
+                    DtdProcessing = DtdProcessing.Ignore,
+                    XmlResolver = null,
                     CloseInput = false
                 });
 
