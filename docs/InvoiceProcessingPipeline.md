@@ -74,10 +74,17 @@ Read raw PDF objects, decode streams, expand supported PDF storage structures, a
 
 ### Known Limitations / Edge Cases
 
-- It is intentionally limited and does not aim to cover all PDF features.
+- It is intentionally limited and is **not** a full PDF engine.
 - Unsupported compression/filter combinations may still block extraction.
 - Some PDFs may use structures not yet covered by the current parser.
 - Image-only PDFs still produce no useful text until OCR is added.
+- Examples of unsupported or only partially supported PDF features include:
+  - uncommon stream filters beyond the currently handled set
+  - complex encrypted PDFs
+  - incremental-update edge cases not represented in current samples
+  - exotic font encodings or broken ToUnicode maps
+  - uncommon annotation/action structures unrelated to invoice extraction
+  - advanced XFA or interactive-form-driven document logic
 
 ## 2. Embedded XML Discovery
 
@@ -106,6 +113,12 @@ Identify embedded XML invoice payloads inside PDFs and expose them as candidate 
 - Discovery is based on common invoice-PDF structures, not the full PDF specification.
 - Very unusual embedded-file arrangements may still be missed.
 - Discovery only finds attachments; it does not itself validate XML usability.
+- Concrete discovery edge cases include:
+  - standalone `Filespec` objects without `FileAttachment` annotations
+  - `FileAttachment` annotations whose Filespec is inline or indirect
+  - attachment metadata stored inside `/ObjStm` object streams
+  - PDFs containing multiple embedded files where only some are invoice XML
+  - embedded attachments that are present but malformed, truncated, or not actually XML
 
 ## 3. XML Decoding and Parsing
 
@@ -131,6 +144,23 @@ Convert embedded XML attachment bytes into usable XML documents and hand them to
 - Only well-formed XML is accepted as usable.
 - Non-XML invoice payloads are ignored.
 - Schema-specific business extraction is still intentionally simple and delegated to detection.
+
+## XML Encoding Handling
+
+XML attachments must be parsed from raw bytes, not from a string pre-decoded as UTF-8.
+
+Why this matters:
+
+- Real invoice attachments may be UTF-8, UTF-16, ISO-8859-2, or another encoding declared in the XML.
+- Some attachments include a BOM, and some rely on the XML declaration for encoding.
+- If the byte stream is forced through UTF-8 first, the XML text can be corrupted before parsing begins.
+- Corruption can make valid XML look malformed, even when the embedded file itself is correct.
+
+Current approach:
+
+- The XML extractor parses directly from the embedded file byte array.
+- Encoding detection is left to XML-aware parsing, which is safer than assuming a fixed text encoding.
+- This is especially important in mixed Hungarian invoice ecosystems where different issuers and generators use different XML encodings.
 
 ## 4. Text Extraction
 
@@ -184,7 +214,9 @@ Clean noisy extracted text into a form that is more stable for Hungarian invoice
 
 - Normalization is rule-based, not linguistic or statistical.
 - Some corrupted characters may still remain imperfect in extracted text.
+- Supplier-specific hacks must be avoided unless they clearly generalize to a recurring document pattern.
 - The normalization layer should stay focused on broad recurring patterns, not supplier-specific one-offs.
+- Maintainability is a hard constraint: if normalization starts encoding issuer-by-issuer special cases, the fallback text path becomes fragile and difficult to reason about.
 
 ## 6. Invoice Number Detection
 
@@ -241,6 +273,37 @@ Make the final process decision after detection: sanitize the invoice number, co
 - Assumes one final invoice number per PDF.
 - Rename conflict handling remains intentionally simple.
 - OCR-based fallback is not yet present, so scanned files still fail after XML and text are exhausted.
+
+## Failure Handling and Fallback Behavior
+
+The pipeline is intentionally sequential and explicit about fallback behavior.
+
+If embedded XML is missing:
+
+- PDF analysis still completes.
+- The XML extractor reports that no usable embedded XML invoice data was found.
+- The processor falls back to selectable-text extraction.
+
+If embedded XML is present but unusable:
+
+- The attachment may still be discovered successfully.
+- XML parsing can still fail if the attachment is malformed or not actually valid XML.
+- In that case, the processor records the XML failure and falls back to text extraction.
+
+If text extraction fails:
+
+- The text extractor returns zero usable tokens.
+- The text detection layer reports that no selectable text was extracted.
+- This typically means the PDF is image-based, structurally unsupported for current text parsing, or otherwise unreadable through the current text path.
+
+Final failure state:
+
+- If XML detection does not produce an invoice number and text detection does not produce an invoice number, processing ends in a failed result.
+- In the failed state:
+  - no rename is performed
+  - the result object reports failure
+  - the log/messages explain whether the failure came from missing XML, unusable XML, missing text, or failed invoice-number detection
+- OCR is the planned future fallback after XML and text, but it is not yet part of the active pipeline.
 
 ## Summary of Improvements Made During This Session
 
