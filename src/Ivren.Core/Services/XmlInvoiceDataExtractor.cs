@@ -1,5 +1,6 @@
 using System.Text;
 using System.Xml.Linq;
+using System.Xml;
 using Ivren.Core.Contracts;
 using Ivren.Core.Models;
 
@@ -21,8 +22,7 @@ public sealed class XmlInvoiceDataExtractor : IXmlInvoiceDataExtractor
                 continue;
             }
 
-            var content = Encoding.UTF8.GetString(embeddedFile.Content).Trim('\0', '\uFEFF', ' ', '\r', '\n', '\t');
-            if (string.IsNullOrWhiteSpace(content))
+            if (!TryLoadXmlContent(embeddedFile.Content, out var content))
             {
                 continue;
             }
@@ -59,7 +59,47 @@ public sealed class XmlInvoiceDataExtractor : IXmlInvoiceDataExtractor
             return true;
         }
 
-        var preview = Encoding.UTF8.GetString(embeddedFile.Content.Take(200).ToArray()).TrimStart('\0', '\uFEFF', ' ', '\r', '\n', '\t');
+        var preview = DecodePreviewText(embeddedFile.Content).TrimStart('\0', '\uFEFF', ' ', '\r', '\n', '\t');
         return preview.StartsWith("<", StringComparison.Ordinal);
+    }
+
+    private static bool TryLoadXmlContent(byte[] contentBytes, out string content)
+    {
+        try
+        {
+            using var stream = new MemoryStream(contentBytes);
+            using var xmlReader = XmlReader.Create(
+                stream,
+                new XmlReaderSettings
+                {
+                    DtdProcessing = DtdProcessing.Prohibit,
+                    CloseInput = false
+                });
+
+            var document = XDocument.Load(xmlReader, LoadOptions.None);
+            content = document.ToString(SaveOptions.DisableFormatting);
+            return !string.IsNullOrWhiteSpace(content);
+        }
+        catch
+        {
+            content = string.Empty;
+            return false;
+        }
+    }
+
+    private static string DecodePreviewText(byte[] contentBytes)
+    {
+        var previewBytes = contentBytes.Take(200).ToArray();
+        if (previewBytes.Length >= 2 && previewBytes[0] == 0xFE && previewBytes[1] == 0xFF)
+        {
+            return Encoding.BigEndianUnicode.GetString(previewBytes[2..]);
+        }
+
+        if (previewBytes.Length >= 2 && previewBytes[0] == 0xFF && previewBytes[1] == 0xFE)
+        {
+            return Encoding.Unicode.GetString(previewBytes[2..]);
+        }
+
+        return Encoding.UTF8.GetString(previewBytes);
     }
 }
