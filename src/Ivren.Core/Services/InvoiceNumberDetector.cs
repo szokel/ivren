@@ -10,7 +10,7 @@ namespace Ivren.Core.Services;
 public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
 {
     private const string InvoiceLabelPattern =
-        @"invoice\s*number|invoice\s*no|szamlaszam|szamla\s*sorszama|sz\s*mla\s*sorsz\s*ma|szamla\s*szama|sz\s*mla\s*sz\s*ma|sorszam";
+        @"invoice\s*number|invoice\s*no|szamlaszam|szamla\s*sorszama|szamla\s*szama|sorszam";
 
     private static readonly string[] XmlElementCandidates =
     [
