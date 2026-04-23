@@ -15,6 +15,14 @@ internal sealed class PdfLowLevelReader
         @"/Length\s+(?:(?<refObject>\d+)\s+(?<refGeneration>\d+)\s+R|(?<length>\d+))",
         RegexOptions.Compiled);
 
+    private static readonly Regex ObjectStreamCountRegex = new(
+        @"/N\s+(?<count>\d+)",
+        RegexOptions.Compiled);
+
+    private static readonly Regex ObjectStreamFirstOffsetRegex = new(
+        @"/First\s+(?<offset>\d+)",
+        RegexOptions.Compiled);
+
     private static readonly Regex FileSpecReferenceRegex = new(
         @"/(?<key>F|UF)\s+(?<object>\d+)\s+(?<generation>\d+)\s+R",
         RegexOptions.Compiled);
@@ -47,8 +55,16 @@ internal sealed class PdfLowLevelReader
         @"/Font\s*<<(?<value>.*?)>>",
         RegexOptions.Compiled | RegexOptions.Singleline);
 
+    private static readonly Regex XObjectResourceRegex = new(
+        @"/XObject\s*<<(?<value>.*?)>>",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
     private static readonly Regex FontAliasReferenceRegex = new(
         @"/(?<alias>F\d+)\s+(?<object>\d+)\s+(?<generation>\d+)\s+R",
+        RegexOptions.Compiled);
+
+    private static readonly Regex XObjectAliasReferenceRegex = new(
+        @"/(?<alias>[A-Za-z][A-Za-z0-9_.-]*)\s+(?<object>\d+)\s+(?<generation>\d+)\s+R",
         RegexOptions.Compiled);
 
     private static readonly Regex ToUnicodeReferenceRegex = new(
@@ -58,6 +74,10 @@ internal sealed class PdfLowLevelReader
     private static readonly Regex FontSelectionRegex = new(
         @"/(?<alias>F\d+)\s+[-+]?\d*\.?\d+\s+Tf",
         RegexOptions.Compiled | RegexOptions.Singleline);
+
+    private static readonly Regex XObjectDrawRegex = new(
+        @"/(?<alias>[A-Za-z][A-Za-z0-9_.-]*)\s+Do",
+        RegexOptions.Compiled);
 
     private static readonly Regex LiteralTextOperatorRegex = new(
         @"\((?<value>(?:\\.|[^\\)])*)\)\s*(?:Tj|'|"")",
@@ -128,7 +148,73 @@ internal sealed class PdfLowLevelReader
             result[number] = new PdfObjectData(number, generation, bodyGroup.Value, bodyBytes);
         }
 
+        ExpandObjectStreams(result);
+
         return result;
+    }
+
+    private static void ExpandObjectStreams(Dictionary<int, PdfObjectData> objects)
+    {
+        foreach (var objectStream in objects.Values
+            .Where(static x => Regex.IsMatch(x.Body, @"/Type\s*/ObjStm\b", RegexOptions.Singleline))
+            .ToArray())
+        {
+            var stream = TryReadStream(objectStream, objects);
+            if (stream is null)
+            {
+                continue;
+            }
+
+            var countMatch = ObjectStreamCountRegex.Match(objectStream.Body);
+            var firstOffsetMatch = ObjectStreamFirstOffsetRegex.Match(objectStream.Body);
+            if (!countMatch.Success || !firstOffsetMatch.Success)
+            {
+                continue;
+            }
+
+            var count = int.Parse(countMatch.Groups["count"].Value, CultureInfo.InvariantCulture);
+            var firstOffset = int.Parse(firstOffsetMatch.Groups["offset"].Value, CultureInfo.InvariantCulture);
+            var decodedText = Encoding.Latin1.GetString(stream.Value.DecodedBytes);
+            if (firstOffset < 0 || firstOffset > decodedText.Length)
+            {
+                continue;
+            }
+
+            var objectHeaders = Regex.Matches(decodedText[..firstOffset], @"(?<number>\d+)\s+(?<offset>\d+)")
+                .Cast<Match>()
+                .Take(count)
+                .Select(static match => new
+                {
+                    Number = int.Parse(match.Groups["number"].Value, CultureInfo.InvariantCulture),
+                    Offset = int.Parse(match.Groups["offset"].Value, CultureInfo.InvariantCulture)
+                })
+                .ToArray();
+
+            for (var index = 0; index < objectHeaders.Length; index++)
+            {
+                var objectStart = firstOffset + objectHeaders[index].Offset;
+                var objectEnd = index + 1 < objectHeaders.Length
+                    ? firstOffset + objectHeaders[index + 1].Offset
+                    : decodedText.Length;
+
+                if (objectStart < 0 || objectStart > decodedText.Length || objectEnd < objectStart)
+                {
+                    continue;
+                }
+
+                if (objects.ContainsKey(objectHeaders[index].Number))
+                {
+                    continue;
+                }
+
+                var body = decodedText[objectStart..objectEnd].Trim();
+                objects[objectHeaders[index].Number] = new PdfObjectData(
+                    objectHeaders[index].Number,
+                    0,
+                    body,
+                    Encoding.Latin1.GetBytes(body));
+            }
+        }
     }
 
     private static List<PdfEmbeddedFileData> ReadEmbeddedFiles(IReadOnlyDictionary<int, PdfObjectData> objects)
@@ -219,6 +305,7 @@ internal sealed class PdfLowLevelReader
         foreach (var pageObject in pageObjects)
         {
             var pageFonts = ReadPageFonts(pageObject.Body, objects);
+            var pageXObjects = ReadXObjectReferences(pageObject.Body, objects);
 
             foreach (var contentObjectNumber in ReadContentObjectNumbers(pageObject.Body))
             {
@@ -235,6 +322,7 @@ internal sealed class PdfLowLevelReader
 
                 var decodedText = Encoding.Latin1.GetString(stream.Value.DecodedBytes);
                 tokens.AddRange(ExtractPageTextTokens(decodedText, pageFonts));
+                tokens.AddRange(ExtractReferencedXObjectTextTokens(decodedText, pageXObjects, objects, visitedObjectNumbers: []));
             }
         }
 
@@ -286,6 +374,103 @@ internal sealed class PdfLowLevelReader
         return result;
     }
 
+    private static IReadOnlyDictionary<string, int> ReadXObjectReferences(
+        string resourceOwnerBody,
+        IReadOnlyDictionary<int, PdfObjectData> objects)
+    {
+        var result = new Dictionary<string, int>(StringComparer.Ordinal);
+        var resourceBodies = ReadResourceBodies(resourceOwnerBody, objects);
+
+        foreach (var resourceBody in resourceBodies)
+        {
+            var xObjectDictionaryMatch = XObjectResourceRegex.Match(resourceBody);
+            if (!xObjectDictionaryMatch.Success)
+            {
+                continue;
+            }
+
+            foreach (Match match in XObjectAliasReferenceRegex.Matches(xObjectDictionaryMatch.Groups["value"].Value))
+            {
+                result[match.Groups["alias"].Value] = int.Parse(match.Groups["object"].Value, CultureInfo.InvariantCulture);
+            }
+        }
+
+        return result;
+    }
+
+    private static IEnumerable<string> ReadResourceBodies(
+        string resourceOwnerBody,
+        IReadOnlyDictionary<int, PdfObjectData> objects)
+    {
+        yield return resourceOwnerBody;
+
+        foreach (Match reference in Regex.Matches(resourceOwnerBody, @"/Resources\s+(?<object>\d+)\s+(?<generation>\d+)\s+R"))
+        {
+            var objectNumber = int.Parse(reference.Groups["object"].Value, CultureInfo.InvariantCulture);
+            if (objects.TryGetValue(objectNumber, out var resourceObject))
+            {
+                yield return resourceObject.Body;
+            }
+        }
+    }
+
+    private static IReadOnlyList<string> ExtractReferencedXObjectTextTokens(
+        string decodedStream,
+        IReadOnlyDictionary<string, int> xObjects,
+        IReadOnlyDictionary<int, PdfObjectData> objects,
+        HashSet<int> visitedObjectNumbers)
+    {
+        var tokens = new List<string>();
+
+        foreach (Match drawOperation in XObjectDrawRegex.Matches(decodedStream))
+        {
+            var alias = drawOperation.Groups["alias"].Value;
+            if (!xObjects.TryGetValue(alias, out var objectNumber))
+            {
+                continue;
+            }
+
+            tokens.AddRange(ExtractXObjectTextTokens(objectNumber, objects, visitedObjectNumbers));
+        }
+
+        return tokens;
+    }
+
+    private static IReadOnlyList<string> ExtractXObjectTextTokens(
+        int objectNumber,
+        IReadOnlyDictionary<int, PdfObjectData> objects,
+        HashSet<int> visitedObjectNumbers)
+    {
+        if (!visitedObjectNumbers.Add(objectNumber))
+        {
+            return Array.Empty<string>();
+        }
+
+        if (!objects.TryGetValue(objectNumber, out var xObject) || !LooksLikeFormXObject(xObject.Body))
+        {
+            visitedObjectNumbers.Remove(objectNumber);
+            return Array.Empty<string>();
+        }
+
+        var stream = TryReadStream(xObject, objects);
+        if (stream is null)
+        {
+            visitedObjectNumbers.Remove(objectNumber);
+            return Array.Empty<string>();
+        }
+
+        var decodedText = Encoding.Latin1.GetString(stream.Value.DecodedBytes);
+        var fonts = ReadPageFonts(xObject.Body, objects);
+        var nestedXObjects = ReadXObjectReferences(xObject.Body, objects);
+        var tokens = new List<string>();
+
+        tokens.AddRange(ExtractPageTextTokens(decodedText, fonts));
+        tokens.AddRange(ExtractReferencedXObjectTextTokens(decodedText, nestedXObjects, objects, visitedObjectNumbers));
+
+        visitedObjectNumbers.Remove(objectNumber);
+        return tokens;
+    }
+
     private static IEnumerable<int> ReadContentObjectNumbers(string pageBody)
     {
         foreach (Match match in PageContentsReferenceRegex.Matches(pageBody))
@@ -310,6 +495,10 @@ internal sealed class PdfLowLevelReader
 
     private static bool LooksLikeFileAttachmentAnnotation(string body)
         => Regex.IsMatch(body, @"/Subtype\s*/FileAttachment\b", RegexOptions.Singleline);
+
+    private static bool LooksLikeFormXObject(string body)
+        => Regex.IsMatch(body, @"/Type\s*/XObject\b", RegexOptions.Singleline)
+            && Regex.IsMatch(body, @"/Subtype\s*/Form\b", RegexOptions.Singleline);
 
     private static IReadOnlyList<string> ExtractPageTextTokens(
         string decodedStream,

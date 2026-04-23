@@ -10,6 +10,8 @@ public sealed class PdfTextExtractionService : ITextExtractionService
     private static readonly (Regex Pattern, string Replacement)[] HungarianFragmentRepairs =
     [
         (new Regex(@"\bbanksz\s+mlasz\s+ma\b", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase), "bankszamlaszama"),
+        (new Regex(@"\bszámlasorszáma\b", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase), "Számla sorszáma"),
+        (new Regex(@"\bszamlasorszama\b", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase), "szamla sorszama"),
         (new Regex(@"\bad\s+sz\s+ma\b", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase), "adoszama"),
         (new Regex(@"\bsz\s+mla\b", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase), "szamla"),
         (new Regex(@"\bsorsz\s+ma\b", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase), "sorszama"),
@@ -45,7 +47,10 @@ public sealed class PdfTextExtractionService : ITextExtractionService
             builder.Append(char.IsControl(character) ? ' ' : character);
         }
 
-        return Regex.Replace(builder.ToString(), @"\s+", " ").Trim();
+        var normalized = Regex.Replace(builder.ToString(), @"\s+", " ").Trim();
+        return LooksLikeCharacterSpacedText(normalized)
+            ? CollapseCharacterSpacedText(normalized)
+            : normalized;
     }
 
     private static string RepairHungarianFragmentedWords(string value)
@@ -57,5 +62,41 @@ public sealed class PdfTextExtractionService : ITextExtractionService
         }
 
         return Regex.Replace(repaired, @"\s+", " ").Trim();
+    }
+
+    private static bool LooksLikeCharacterSpacedText(string value)
+    {
+        var parts = value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 8)
+        {
+            return false;
+        }
+
+        var singleCharacterParts = parts.Count(static part => part.Length == 1 && !char.IsPunctuation(part[0]));
+        return singleCharacterParts >= parts.Length * 0.65;
+    }
+
+    private static string CollapseCharacterSpacedText(string value)
+    {
+        var builder = new StringBuilder(value.Length);
+        var parts = value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var part in parts)
+        {
+            if (part.Length == 1 && !char.IsPunctuation(part[0]))
+            {
+                builder.Append(part);
+                continue;
+            }
+
+            if (builder.Length > 0 && !char.IsPunctuation(part[0]))
+            {
+                builder.Append(' ');
+            }
+
+            builder.Append(part);
+        }
+
+        return builder.ToString();
     }
 }
