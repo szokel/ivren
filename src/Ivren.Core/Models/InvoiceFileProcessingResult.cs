@@ -7,6 +7,8 @@ public sealed record InvoiceFileProcessingResult(
     string? InvoiceNumber,
     string? SanitizedInvoiceNumber,
     string? TargetFilePath,
+    bool DryRunEnabled,
+    bool RenameSkippedDueToDryRun,
     bool Renamed,
     IReadOnlyList<string> Messages)
 {

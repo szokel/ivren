@@ -56,6 +56,13 @@ public partial class MainForm : Form
 
         resultsGrid.Columns.Add(new DataGridViewTextBoxColumn
         {
+            Name = "RenameAction",
+            HeaderText = "Rename",
+            Width = 130
+        });
+
+        resultsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
             Name = "Message",
             HeaderText = "Message",
             AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
@@ -131,11 +138,16 @@ public partial class MainForm : Form
         resultsGrid.Rows.Clear();
         logTextBox.Clear();
         AppendLog(startMessage);
+        AppendLog(dryRunCheckBox.Checked
+            ? "Dry-run mode is enabled. Files will not be renamed."
+            : "Dry-run mode is disabled. Successful detections will rename files.");
+
+        var options = new InvoiceFileProcessingOptions(dryRunCheckBox.Checked);
 
         foreach (var filePath in filePaths)
         {
             AppendLog($"Starting: {filePath}");
-            var result = await Task.Run(() => _invoiceFileProcessor.Process(filePath));
+            var result = await Task.Run(() => _invoiceFileProcessor.Process(filePath, options));
             AddResultRow(result);
 
             foreach (var message in result.Messages)
@@ -155,6 +167,11 @@ public partial class MainForm : Form
         var targetFileName = string.IsNullOrWhiteSpace(result.TargetFilePath)
             ? string.Empty
             : Path.GetFileName(result.TargetFilePath);
+        var renameAction = result.RenameSkippedDueToDryRun
+            ? "Skipped (Dry Run)"
+            : result.Renamed
+                ? "Renamed"
+                : "Not Renamed";
 
         resultsGrid.Rows.Add(
             Path.GetFileName(result.SourceFilePath),
@@ -162,6 +179,7 @@ public partial class MainForm : Form
             result.DetectionSource.ToString(),
             result.InvoiceNumber ?? string.Empty,
             targetFileName,
+            renameAction,
             result.Summary);
     }
 
@@ -182,5 +200,6 @@ public partial class MainForm : Form
         processFolderButton.Enabled = enabled;
         processSingleFileButton.Enabled = enabled;
         folderPathTextBox.Enabled = enabled;
+        dryRunCheckBox.Enabled = enabled;
     }
 }

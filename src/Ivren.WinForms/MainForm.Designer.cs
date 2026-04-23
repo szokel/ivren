@@ -10,6 +10,7 @@ partial class MainForm
     private Button browseFolderButton;
     private Button processFolderButton;
     private Button processSingleFileButton;
+    private CheckBox dryRunCheckBox;
     private DataGridView resultsGrid;
     private TextBox logTextBox;
     private Label resultsLabel;
@@ -35,6 +36,7 @@ partial class MainForm
         browseFolderButton = new Button();
         processFolderButton = new Button();
         processSingleFileButton = new Button();
+        dryRunCheckBox = new CheckBox();
         resultsLabel = new Label();
         resultsGrid = new DataGridView();
         logLabel = new Label();
@@ -74,6 +76,7 @@ partial class MainForm
         commandPanel.Controls.Add(browseFolderButton);
         commandPanel.Controls.Add(processFolderButton);
         commandPanel.Controls.Add(processSingleFileButton);
+        commandPanel.Controls.Add(dryRunCheckBox);
         commandPanel.Dock = DockStyle.Fill;
         commandPanel.Location = new Point(15, 15);
         commandPanel.Name = "commandPanel";
@@ -130,6 +133,19 @@ partial class MainForm
         processSingleFileButton.Text = "Process Single PDF";
         processSingleFileButton.UseVisualStyleBackColor = true;
         processSingleFileButton.Click += processSingleFileButton_Click;
+        // 
+        // dryRunCheckBox
+        // 
+        dryRunCheckBox.Anchor = AnchorStyles.Left;
+        dryRunCheckBox.AutoSize = true;
+        dryRunCheckBox.Checked = true;
+        dryRunCheckBox.CheckState = CheckState.Checked;
+        dryRunCheckBox.Location = new Point(1005, 8);
+        dryRunCheckBox.Name = "dryRunCheckBox";
+        dryRunCheckBox.Size = new Size(69, 19);
+        dryRunCheckBox.TabIndex = 5;
+        dryRunCheckBox.Text = "Dry Run";
+        dryRunCheckBox.UseVisualStyleBackColor = true;
         // 
         // resultsLabel
         // 

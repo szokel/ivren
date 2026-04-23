@@ -4,5 +4,5 @@ namespace Ivren.Core.Contracts;
 
 public interface IInvoiceFileProcessor
 {
-    InvoiceFileProcessingResult Process(string filePath);
+    InvoiceFileProcessingResult Process(string filePath, InvoiceFileProcessingOptions? options = null);
 }

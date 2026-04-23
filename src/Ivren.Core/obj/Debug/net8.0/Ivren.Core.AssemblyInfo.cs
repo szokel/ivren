@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Ivren.Core")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+afd872d6880e1692e09d45ca84ed4b6d140b8443")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+38e09add22f9983507592ee8d9043eaf62fb5b97")]
 [assembly: System.Reflection.AssemblyProductAttribute("Ivren.Core")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Ivren.Core")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
