@@ -5,6 +5,7 @@ namespace Ivren.WinForms;
 
 public partial class MainForm : Form
 {
+    private const string DefaultSampleFolderPath = @"C:\repo\ivren\mintaszamla";
     private readonly IInvoiceFileProcessor _invoiceFileProcessor;
 
     public MainForm(IInvoiceFileProcessor invoiceFileProcessor)
@@ -13,6 +14,9 @@ public partial class MainForm : Form
 
         InitializeComponent();
         ConfigureResultsGrid();
+        folderPathTextBox.TextChanged += (_, _) => UpdateProcessFolderButtonState();
+        InitializeDefaultFolder();
+        UpdateProcessFolderButtonState();
     }
 
     private void ConfigureResultsGrid()
@@ -81,8 +85,7 @@ public partial class MainForm : Form
 
         if (dialog.ShowDialog(this) == DialogResult.OK)
         {
-            folderPathTextBox.Text = dialog.SelectedPath;
-            AppendLog($"Folder selected: {dialog.SelectedPath}");
+            ApplySelectedFolder(dialog.SelectedPath);
         }
     }
 
@@ -194,10 +197,33 @@ public partial class MainForm : Form
         logTextBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
     }
 
+    private void InitializeDefaultFolder()
+    {
+        if (!Directory.Exists(DefaultSampleFolderPath))
+        {
+            folderPathTextBox.Clear();
+            UpdateProcessFolderButtonState();
+            return;
+        }
+
+        ApplySelectedFolder(DefaultSampleFolderPath);
+    }
+
+    private void ApplySelectedFolder(string folderPath)
+    {
+        folderPathTextBox.Text = folderPath;
+        AppendLog($"Folder selected: {folderPath}");
+    }
+
+    private void UpdateProcessFolderButtonState()
+    {
+        processFolderButton.Enabled = Directory.Exists(folderPathTextBox.Text.Trim());
+    }
+
     private void ToggleUi(bool enabled)
     {
         browseFolderButton.Enabled = enabled;
-        processFolderButton.Enabled = enabled;
+        processFolderButton.Enabled = enabled && Directory.Exists(folderPathTextBox.Text.Trim());
         processSingleFileButton.Enabled = enabled;
         folderPathTextBox.Enabled = enabled;
         dryRunCheckBox.Enabled = enabled;
