@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Ivren.Core.Contracts;
 using Ivren.Core.Models;
 
@@ -5,7 +6,7 @@ namespace Ivren.WinForms;
 
 public partial class MainForm : Form
 {
-    private const string DefaultSampleFolderPath = @"C:\repo\ivren\mintaszamla";
+    private const string SettingsFileName = "Ivren.WinForms.settings.json";
     private readonly IInvoiceFileProcessor _invoiceFileProcessor;
 
     public MainForm(IInvoiceFileProcessor invoiceFileProcessor)
@@ -199,20 +200,72 @@ public partial class MainForm : Form
 
     private void InitializeDefaultFolder()
     {
-        if (!Directory.Exists(DefaultSampleFolderPath))
+        if (!TryLoadStartupSettings(out var settings))
         {
             folderPathTextBox.Clear();
             UpdateProcessFolderButtonState();
             return;
         }
 
-        ApplySelectedFolder(DefaultSampleFolderPath);
+        if (string.IsNullOrWhiteSpace(settings.DefaultFolder))
+        {
+            AppendLog($"The settings file '{SettingsFileName}' does not define a usable DefaultFolder value.");
+            folderPathTextBox.Clear();
+            UpdateProcessFolderButtonState();
+            return;
+        }
+
+        if (!Directory.Exists(settings.DefaultFolder))
+        {
+            AppendLog($"The configured DefaultFolder does not exist: {settings.DefaultFolder}");
+            folderPathTextBox.Clear();
+            UpdateProcessFolderButtonState();
+            return;
+        }
+
+        ApplySelectedFolder(settings.DefaultFolder);
     }
 
     private void ApplySelectedFolder(string folderPath)
     {
         folderPathTextBox.Text = folderPath;
         AppendLog($"Folder selected: {folderPath}");
+    }
+
+    private bool TryLoadStartupSettings(out StartupSettings settings)
+    {
+        var settingsPath = Path.Combine(AppContext.BaseDirectory, SettingsFileName);
+        if (!File.Exists(settingsPath))
+        {
+            AppendLog($"Settings file not found: {settingsPath}");
+            settings = new StartupSettings();
+            return false;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(settingsPath);
+            settings = JsonSerializer.Deserialize<StartupSettings>(json) ?? new StartupSettings();
+            return true;
+        }
+        catch (JsonException)
+        {
+            AppendLog($"Settings file is not valid JSON: {settingsPath}");
+            settings = new StartupSettings();
+            return false;
+        }
+        catch (IOException)
+        {
+            AppendLog($"Settings file could not be read: {settingsPath}");
+            settings = new StartupSettings();
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            AppendLog($"Settings file could not be accessed: {settingsPath}");
+            settings = new StartupSettings();
+            return false;
+        }
     }
 
     private void UpdateProcessFolderButtonState()
@@ -227,5 +280,10 @@ public partial class MainForm : Form
         processSingleFileButton.Enabled = enabled;
         folderPathTextBox.Enabled = enabled;
         dryRunCheckBox.Enabled = enabled;
+    }
+
+    private sealed class StartupSettings
+    {
+        public string? DefaultFolder { get; init; }
     }
 }
