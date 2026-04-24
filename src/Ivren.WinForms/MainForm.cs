@@ -8,7 +8,9 @@ public partial class MainForm : Form
 {
     private const string SettingsFileName = "Ivren.WinForms.settings.json";
     private const string UserStateFileName = "Ivren.WinForms.user.json";
+    private const int MaxFolderHistoryEntries = 10;
     private readonly IInvoiceFileProcessor _invoiceFileProcessor;
+    private List<string> _folderHistory = [];
 
     public MainForm(IInvoiceFileProcessor invoiceFileProcessor)
     {
@@ -16,7 +18,7 @@ public partial class MainForm : Form
 
         InitializeComponent();
         ConfigureResultsGrid();
-        folderPathTextBox.TextChanged += (_, _) => UpdateProcessFolderButtonState();
+        folderPathComboBox.TextChanged += (_, _) => UpdateProcessFolderButtonState();
         InitializeStartupFolder();
         UpdateProcessFolderButtonState();
     }
@@ -81,24 +83,26 @@ public partial class MainForm : Form
         using var dialog = new FolderBrowserDialog
         {
             Description = "Select the folder that contains invoice PDFs.",
-            InitialDirectory = Directory.Exists(folderPathTextBox.Text) ? folderPathTextBox.Text : string.Empty,
+            InitialDirectory = Directory.Exists(folderPathComboBox.Text) ? folderPathComboBox.Text : string.Empty,
             UseDescriptionForTitle = true
         };
 
         if (dialog.ShowDialog(this) == DialogResult.OK)
         {
-            ApplySelectedFolder(dialog.SelectedPath, persistUserState: true);
+            ApplySelectedFolder(dialog.SelectedPath);
         }
     }
 
     private async void processFolderButton_Click(object sender, EventArgs e)
     {
-        var folderPath = folderPathTextBox.Text.Trim();
+        var folderPath = folderPathComboBox.Text.Trim();
         if (!Directory.Exists(folderPath))
         {
             MessageBox.Show(this, "Please select an existing folder.", "Folder Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
+
+        SaveFolderUsage(folderPath);
 
         var pdfFiles = Directory.GetFiles(folderPath, "*.pdf", SearchOption.TopDirectoryOnly)
             .OrderBy(static x => x, StringComparer.OrdinalIgnoreCase)
@@ -123,9 +127,9 @@ public partial class MainForm : Form
             Multiselect = false
         };
 
-        if (Directory.Exists(folderPathTextBox.Text))
+        if (Directory.Exists(folderPathComboBox.Text))
         {
-            dialog.InitialDirectory = folderPathTextBox.Text;
+            dialog.InitialDirectory = folderPathComboBox.Text;
         }
 
         if (dialog.ShowDialog(this) != DialogResult.OK)
@@ -136,7 +140,7 @@ public partial class MainForm : Form
         var selectedFolder = Path.GetDirectoryName(dialog.FileName);
         if (!string.IsNullOrWhiteSpace(selectedFolder))
         {
-            ApplySelectedFolder(selectedFolder, persistUserState: true);
+            ApplySelectedFolder(selectedFolder);
         }
 
         await ProcessFilesAsync([dialog.FileName], "Processing one selected PDF file.");
@@ -206,20 +210,23 @@ public partial class MainForm : Form
 
     private void InitializeStartupFolder()
     {
-        if (TryLoadUserState(out var userState)
+        var userStateLoaded = TryLoadUserState(out var userState);
+        _folderHistory = BuildFolderHistory(userState);
+        RefreshFolderHistoryDropdown();
+
+        if (userStateLoaded
             && !string.IsNullOrWhiteSpace(userState.LastUsedFolder)
             && Directory.Exists(userState.LastUsedFolder))
         {
             ApplySelectedFolder(
                 userState.LastUsedFolder,
-                persistUserState: false,
                 logMessage: $"Using last used folder: {userState.LastUsedFolder}");
             return;
         }
 
         if (!TryLoadStartupSettings(out var settings))
         {
-            folderPathTextBox.Clear();
+            folderPathComboBox.Text = string.Empty;
             UpdateProcessFolderButtonState();
             return;
         }
@@ -227,7 +234,7 @@ public partial class MainForm : Form
         if (string.IsNullOrWhiteSpace(settings.DefaultFolder))
         {
             AppendLog($"The settings file '{SettingsFileName}' does not define a usable DefaultFolder value.");
-            folderPathTextBox.Clear();
+            folderPathComboBox.Text = string.Empty;
             UpdateProcessFolderButtonState();
             return;
         }
@@ -235,25 +242,119 @@ public partial class MainForm : Form
         if (!Directory.Exists(settings.DefaultFolder))
         {
             AppendLog($"The configured DefaultFolder does not exist: {settings.DefaultFolder}");
-            folderPathTextBox.Clear();
+            folderPathComboBox.Text = string.Empty;
             UpdateProcessFolderButtonState();
             return;
         }
 
         ApplySelectedFolder(
             settings.DefaultFolder,
-            persistUserState: false,
             logMessage: $"Using default folder: {settings.DefaultFolder}");
     }
 
-    private void ApplySelectedFolder(string folderPath, bool persistUserState, string? logMessage = null)
+    private void ApplySelectedFolder(string folderPath, string? logMessage = null)
     {
-        folderPathTextBox.Text = folderPath;
+        folderPathComboBox.Text = folderPath;
         AppendLog(logMessage ?? $"Folder selected: {folderPath}");
+    }
 
-        if (persistUserState)
+    private void SaveFolderUsage(string folderPath)
+    {
+        var normalizedFolderPath = NormalizeFolderPathForState(folderPath);
+        var updatedHistory = new List<string> { normalizedFolderPath };
+
+        foreach (var existingFolder in _folderHistory)
         {
-            TrySaveUserState(new UserState { LastUsedFolder = folderPath });
+            if (updatedHistory.Contains(existingFolder, StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            updatedHistory.Add(existingFolder);
+            if (updatedHistory.Count == MaxFolderHistoryEntries)
+            {
+                break;
+            }
+        }
+
+        _folderHistory = updatedHistory;
+        RefreshFolderHistoryDropdown();
+        folderPathComboBox.Text = normalizedFolderPath;
+
+        TrySaveUserState(new UserState
+        {
+            LastUsedFolder = normalizedFolderPath,
+            FolderHistory = _folderHistory.ToArray()
+        });
+    }
+
+    private void RefreshFolderHistoryDropdown()
+    {
+        folderPathComboBox.BeginUpdate();
+        try
+        {
+            folderPathComboBox.Items.Clear();
+            folderPathComboBox.Items.AddRange(_folderHistory.Cast<object>().ToArray());
+        }
+        finally
+        {
+            folderPathComboBox.EndUpdate();
+        }
+    }
+
+    private static List<string> BuildFolderHistory(UserState userState)
+    {
+        var history = new List<string>();
+        foreach (var folderPath in userState.FolderHistory)
+        {
+            AddFolderToHistory(history, folderPath);
+            if (history.Count == MaxFolderHistoryEntries)
+            {
+                break;
+            }
+        }
+
+        var lastUsedFolder = string.IsNullOrWhiteSpace(userState.LastUsedFolder)
+            ? string.Empty
+            : NormalizeFolderPathForState(userState.LastUsedFolder);
+
+        if (!string.IsNullOrWhiteSpace(lastUsedFolder)
+            && Directory.Exists(lastUsedFolder)
+            && !history.Contains(lastUsedFolder, StringComparer.OrdinalIgnoreCase))
+        {
+            history.Insert(0, lastUsedFolder);
+        }
+
+        return history
+            .Take(MaxFolderHistoryEntries)
+            .ToList();
+    }
+
+    private static void AddFolderToHistory(List<string> history, string? folderPath)
+    {
+        if (string.IsNullOrWhiteSpace(folderPath))
+        {
+            return;
+        }
+
+        var normalizedFolderPath = NormalizeFolderPathForState(folderPath);
+        if (history.Contains(normalizedFolderPath, StringComparer.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        history.Add(normalizedFolderPath);
+    }
+
+    private static string NormalizeFolderPathForState(string folderPath)
+    {
+        try
+        {
+            return Path.GetFullPath(folderPath.Trim());
+        }
+        catch
+        {
+            return folderPath.Trim();
         }
     }
 
@@ -365,15 +466,15 @@ public partial class MainForm : Form
 
     private void UpdateProcessFolderButtonState()
     {
-        processFolderButton.Enabled = Directory.Exists(folderPathTextBox.Text.Trim());
+        processFolderButton.Enabled = Directory.Exists(folderPathComboBox.Text.Trim());
     }
 
     private void ToggleUi(bool enabled)
     {
         browseFolderButton.Enabled = enabled;
-        processFolderButton.Enabled = enabled && Directory.Exists(folderPathTextBox.Text.Trim());
+        processFolderButton.Enabled = enabled && Directory.Exists(folderPathComboBox.Text.Trim());
         processSingleFileButton.Enabled = enabled;
-        folderPathTextBox.Enabled = enabled;
+        folderPathComboBox.Enabled = enabled;
         dryRunCheckBox.Enabled = enabled;
     }
 
@@ -385,5 +486,7 @@ public partial class MainForm : Form
     private sealed class UserState
     {
         public string? LastUsedFolder { get; init; }
+
+        public string[] FolderHistory { get; init; } = [];
     }
 }

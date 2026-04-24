@@ -6,7 +6,7 @@ partial class MainForm
     private TableLayoutPanel layoutPanel;
     private FlowLayoutPanel commandPanel;
     private Label folderLabel;
-    private TextBox folderPathTextBox;
+    private ComboBox folderPathComboBox;
     private Button browseFolderButton;
     private Button processFolderButton;
     private Button processSingleFileButton;
@@ -32,7 +32,7 @@ partial class MainForm
         layoutPanel = new TableLayoutPanel();
         commandPanel = new FlowLayoutPanel();
         folderLabel = new Label();
-        folderPathTextBox = new TextBox();
+        folderPathComboBox = new ComboBox();
         browseFolderButton = new Button();
         processFolderButton = new Button();
         processSingleFileButton = new Button();
@@ -72,7 +72,7 @@ partial class MainForm
         // 
         commandPanel.AutoSize = true;
         commandPanel.Controls.Add(folderLabel);
-        commandPanel.Controls.Add(folderPathTextBox);
+        commandPanel.Controls.Add(folderPathComboBox);
         commandPanel.Controls.Add(browseFolderButton);
         commandPanel.Controls.Add(processFolderButton);
         commandPanel.Controls.Add(processSingleFileButton);
@@ -95,14 +95,16 @@ partial class MainForm
         folderLabel.TabIndex = 0;
         folderLabel.Text = "Folder:";
         // 
-        // folderPathTextBox
+        // folderPathComboBox
         // 
-        folderPathTextBox.Anchor = AnchorStyles.Left | AnchorStyles.Right;
-        folderPathTextBox.Location = new Point(56, 5);
-        folderPathTextBox.Margin = new Padding(3, 5, 8, 3);
-        folderPathTextBox.Name = "folderPathTextBox";
-        folderPathTextBox.Size = new Size(520, 23);
-        folderPathTextBox.TabIndex = 1;
+        folderPathComboBox.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        folderPathComboBox.DropDownStyle = ComboBoxStyle.DropDown;
+        folderPathComboBox.FormattingEnabled = true;
+        folderPathComboBox.Location = new Point(56, 5);
+        folderPathComboBox.Margin = new Padding(3, 5, 8, 3);
+        folderPathComboBox.Name = "folderPathComboBox";
+        folderPathComboBox.Size = new Size(520, 23);
+        folderPathComboBox.TabIndex = 1;
         // 
         // browseFolderButton
         // 
