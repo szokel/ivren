@@ -25,6 +25,11 @@ public sealed class PdfAnalysisService : IPdfAnalysisService
             .Select(static x => new PdfEmbeddedFile(x.FileName, x.MediaType, x.Content))
             .ToArray();
 
-        return new PdfAnalysisResult(filePath, embeddedFiles, readResult.TextTokens, readResult.Messages.ToArray());
+        return new PdfAnalysisResult(
+            filePath,
+            embeddedFiles,
+            readResult.TextTokens,
+            readResult.Messages.ToArray(),
+            readResult.IsEncrypted);
     }
 }

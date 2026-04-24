@@ -51,6 +51,46 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
 
             var analysisResult = _pdfAnalysisService.Analyze(filePath);
             messages.AddRange(analysisResult.Messages);
+            if (analysisResult.IsEncrypted)
+            {
+                var failedTargetPath = BuildFailedTargetFilePath(filePath, options);
+
+                if (options.DryRun)
+                {
+                    AddDryRunFailedMoveMessages(messages, failedTargetPath);
+
+                    return Complete(new InvoiceFileProcessingResult(
+                        filePath,
+                        FileProcessStatus.Failed,
+                        DetectionSource.None,
+                        null,
+                        null,
+                        failedTargetPath,
+                        true,
+                        true,
+                        false,
+                        messages,
+                        IsEncrypted: true,
+                        FailureReason: ProcessingFailureReason.PasswordProtected));
+                }
+
+                var failedMoveResult = MoveFailedFile(filePath, options);
+                messages.Add(failedMoveResult.Message);
+
+                return Complete(new InvoiceFileProcessingResult(
+                    filePath,
+                    FileProcessStatus.Failed,
+                    DetectionSource.None,
+                    null,
+                    null,
+                    failedMoveResult.TargetFilePath,
+                    options.DryRun,
+                    false,
+                    failedMoveResult.Renamed,
+                    messages,
+                    IsEncrypted: true,
+                    FailureReason: ProcessingFailureReason.PasswordProtected));
+            }
 
             var xmlResult = _xmlInvoiceDataExtractor.Extract(analysisResult);
             messages.AddRange(xmlResult.Messages);
@@ -307,8 +347,10 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
             result.TargetFilePath,
             result.DryRunEnabled,
             result.Status == FileProcessStatus.Success,
-            result.Summary,
-            error);
+            BuildAuditMessage(result),
+            error,
+            result.IsEncrypted,
+            result.FailureReason);
 
         var auditResult = _auditLogService.Write(options.AuditLogFolderPath, entry);
         messages.Add(auditResult.Message);
@@ -317,4 +359,9 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
             messages.Add($"Audit log error: {auditResult.Error}");
         }
     }
+
+    private static string BuildAuditMessage(InvoiceFileProcessingResult result)
+        => result.FailureReason == ProcessingFailureReason.PasswordProtected
+            ? "Password-protected PDF"
+            : result.Summary;
 }

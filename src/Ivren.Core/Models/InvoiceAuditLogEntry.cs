@@ -10,4 +10,6 @@ public sealed record InvoiceAuditLogEntry(
     bool DryRun,
     bool Success,
     string Message,
-    string? Error);
+    string? Error,
+    bool IsEncrypted = false,
+    ProcessingFailureReason FailureReason = ProcessingFailureReason.None);

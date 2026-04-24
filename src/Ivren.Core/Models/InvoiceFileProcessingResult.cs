@@ -10,7 +10,9 @@ public sealed record InvoiceFileProcessingResult(
     bool DryRunEnabled,
     bool RenameSkippedDueToDryRun,
     bool Renamed,
-    IReadOnlyList<string> Messages)
+    IReadOnlyList<string> Messages,
+    bool IsEncrypted = false,
+    ProcessingFailureReason FailureReason = ProcessingFailureReason.None)
 {
     public string Summary => Messages.LastOrDefault() ?? string.Empty;
 }

@@ -111,11 +111,33 @@ internal sealed class PdfLowLevelReader
         @"<(?<start>[0-9A-Fa-f]+)>\s*<(?<end>[0-9A-Fa-f]+)>\s*\[(?<targets>.*?)\]",
         RegexOptions.Compiled | RegexOptions.Singleline);
 
+    private static readonly Regex EncryptionDictionaryReferenceRegex = new(
+        @"/Encrypt\b(?!\s+false\b)",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
+    private static readonly Regex CryptStreamFilterRegex = new(
+        @"/Filter\s*(?:/Crypt\b|\[[^\]]*/Crypt\b)",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
     public PdfReadResult Read(string filePath)
     {
         var bytes = File.ReadAllBytes(filePath);
         var content = Encoding.Latin1.GetString(bytes);
         var objects = ReadObjects(content, bytes);
+        if (LooksEncrypted(content))
+        {
+            var encryptedMessages = new List<string>
+            {
+                "PDF encryption marker was detected.",
+                "PDF is password-protected and cannot be processed without a password."
+            };
+
+            return new PdfReadResult(
+                Array.Empty<PdfEmbeddedFileData>(),
+                Array.Empty<string>(),
+                encryptedMessages,
+                IsEncrypted: true);
+        }
 
         var embeddedFiles = ReadEmbeddedFiles(objects);
         var textTokens = ReadTextTokens(objects);
@@ -132,6 +154,10 @@ internal sealed class PdfLowLevelReader
 
         return new PdfReadResult(embeddedFiles, textTokens, messages);
     }
+
+    private static bool LooksEncrypted(string content)
+        => EncryptionDictionaryReferenceRegex.IsMatch(content)
+            || CryptStreamFilterRegex.IsMatch(content);
 
     private static Dictionary<int, PdfObjectData> ReadObjects(string content, byte[] bytes)
     {
@@ -1040,7 +1066,8 @@ internal sealed class PdfLowLevelReader
 internal sealed record PdfReadResult(
     IReadOnlyList<PdfEmbeddedFileData> EmbeddedFiles,
     IReadOnlyList<string> TextTokens,
-    IReadOnlyList<string> Messages);
+    IReadOnlyList<string> Messages,
+    bool IsEncrypted = false);
 
 internal sealed record PdfEmbeddedFileData(
     string FileName,

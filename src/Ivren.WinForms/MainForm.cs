@@ -51,6 +51,13 @@ public partial class MainForm : Form
 
         resultsGrid.Columns.Add(new DataGridViewTextBoxColumn
         {
+            Name = "FailureReason",
+            HeaderText = "Failure Reason",
+            Width = 130
+        });
+
+        resultsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
             Name = "DetectionSource",
             HeaderText = "Source",
             Width = 80
@@ -230,6 +237,7 @@ public partial class MainForm : Form
         var rowIndex = resultsGrid.Rows.Add(
             Path.GetFileName(result.SourceFilePath),
             result.Status.ToString(),
+            result.FailureReason == ProcessingFailureReason.None ? string.Empty : result.FailureReason.ToString(),
             result.DetectionSource.ToString(),
             result.InvoiceNumber ?? string.Empty,
             targetPath,
