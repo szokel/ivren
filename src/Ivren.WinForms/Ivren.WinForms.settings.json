@@ -1,6 +1,6 @@
 {
   "DefaultFolder": "C:\\repo\\ivren\\mintaszamla",
-  "RenamedFolder": "C:\\repo\\ivren\\renamed",
-  "FailedFolder": "C:\\repo\\ivren\\failed",
-  "AuditLogFolder": "C:\\repo\\ivren\\logs"
+  "RenamedFolder": "C:\\repo\\ivren\\___\\run\\renamed",
+  "FailedFolder": "C:\\repo\\ivren\\___\\run\\failed",
+  "AuditLogFolder": "C:\\repo\\ivren\\___\\run\\logs"
 }

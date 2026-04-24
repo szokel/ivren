@@ -340,11 +340,15 @@ public partial class MainForm : Form
         string? configuredFolder,
         string displayName)
     {
-        if (!string.IsNullOrWhiteSpace(lastUsedFolder) && Directory.Exists(lastUsedFolder))
+        if (!string.IsNullOrWhiteSpace(lastUsedFolder))
         {
-            comboBox.Text = lastUsedFolder;
-            AppendLog($"Using last used {displayName} folder: {lastUsedFolder}");
-            return lastUsedFolder;
+            var normalizedLastUsedFolder = NormalizeFolderPathForState(lastUsedFolder);
+            if (Directory.Exists(normalizedLastUsedFolder))
+            {
+                comboBox.Text = normalizedLastUsedFolder;
+                AppendLog($"Using last used {displayName} folder: {normalizedLastUsedFolder}");
+                return normalizedLastUsedFolder;
+            }
         }
 
         if (string.IsNullOrWhiteSpace(configuredFolder))
@@ -354,16 +358,35 @@ public partial class MainForm : Form
             return null;
         }
 
-        if (!Directory.Exists(configuredFolder))
+        var normalizedConfiguredFolder = NormalizeFolderPathForState(configuredFolder);
+        if (!Directory.Exists(normalizedConfiguredFolder)
+            && !TryCreateStartupOutputFolder(normalizedConfiguredFolder, displayName))
         {
             comboBox.Text = string.Empty;
-            AppendLog($"The configured {displayName} folder does not exist: {configuredFolder}");
             return null;
         }
 
-        comboBox.Text = configuredFolder;
-        AppendLog($"Using default {displayName} folder: {configuredFolder}");
-        return configuredFolder;
+        comboBox.Text = normalizedConfiguredFolder;
+        AppendLog($"Using default {displayName} folder: {normalizedConfiguredFolder}");
+        return normalizedConfiguredFolder;
+    }
+
+    private bool TryCreateStartupOutputFolder(string folderPath, string displayName)
+    {
+        try
+        {
+            Directory.CreateDirectory(folderPath);
+            AppendLog($"Created {displayName} folder: {folderPath}");
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException
+            or UnauthorizedAccessException
+            or ArgumentException
+            or NotSupportedException)
+        {
+            AppendLog($"The configured {displayName} folder could not be created: {folderPath}. {exception.Message}");
+            return false;
+        }
     }
 
     private void SaveFolderUsage(string folderPath, string renamedFolderPath, string failedFolderPath, string auditLogFolderPath)
