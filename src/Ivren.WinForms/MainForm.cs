@@ -11,6 +11,9 @@ public partial class MainForm : Form
     private const int MaxFolderHistoryEntries = 10;
     private readonly IInvoiceFileProcessor _invoiceFileProcessor;
     private List<string> _folderHistory = [];
+    private List<string> _renamedFolderHistory = [];
+    private List<string> _failedFolderHistory = [];
+    private List<string> _auditLogFolderHistory = [];
     private string? _lastUsedRenamedFolder;
     private string? _lastUsedFailedFolder;
     private string? _lastUsedAuditLogFolder;
@@ -91,25 +94,25 @@ public partial class MainForm : Form
 
     private void browseRenamedFolderButton_Click(object sender, EventArgs e)
     {
-        if (TryBrowseForFolder("Select the folder for successfully renamed PDFs.", renamedFolderTextBox.Text, out var selectedPath))
+        if (TryBrowseForFolder("Select the folder for successfully renamed PDFs.", renamedFolderComboBox.Text, out var selectedPath))
         {
-            ApplyFolderText(renamedFolderTextBox, selectedPath, $"Renamed PDFs folder selected: {selectedPath}");
+            ApplyFolderText(renamedFolderComboBox, selectedPath, $"Renamed PDFs folder selected: {selectedPath}");
         }
     }
 
     private void browseFailedFolderButton_Click(object sender, EventArgs e)
     {
-        if (TryBrowseForFolder("Select the folder for PDFs that could not be renamed.", failedFolderTextBox.Text, out var selectedPath))
+        if (TryBrowseForFolder("Select the folder for PDFs that could not be renamed.", failedFolderComboBox.Text, out var selectedPath))
         {
-            ApplyFolderText(failedFolderTextBox, selectedPath, $"Failed PDFs folder selected: {selectedPath}");
+            ApplyFolderText(failedFolderComboBox, selectedPath, $"Failed PDFs folder selected: {selectedPath}");
         }
     }
 
     private void browseAuditLogFolderButton_Click(object sender, EventArgs e)
     {
-        if (TryBrowseForFolder("Select the folder for audit log files.", auditLogFolderTextBox.Text, out var selectedPath))
+        if (TryBrowseForFolder("Select the folder for audit log files.", auditLogFolderComboBox.Text, out var selectedPath))
         {
-            ApplyFolderText(auditLogFolderTextBox, selectedPath, $"Audit log folder selected: {selectedPath}");
+            ApplyFolderText(auditLogFolderComboBox, selectedPath, $"Audit log folder selected: {selectedPath}");
         }
     }
 
@@ -188,9 +191,9 @@ public partial class MainForm : Form
 
         var options = new InvoiceFileProcessingOptions(
             dryRunCheckBox.Checked,
-            EmptyToNull(renamedFolderTextBox.Text.Trim()),
-            EmptyToNull(failedFolderTextBox.Text.Trim()),
-            EmptyToNull(auditLogFolderTextBox.Text.Trim()));
+            EmptyToNull(renamedFolderComboBox.Text.Trim()),
+            EmptyToNull(failedFolderComboBox.Text.Trim()),
+            EmptyToNull(auditLogFolderComboBox.Text.Trim()));
 
         foreach (var filePath in filePaths)
         {
@@ -245,8 +248,14 @@ public partial class MainForm : Form
     private void InitializeStartupFolders()
     {
         var userStateLoaded = TryLoadUserState(out var userState);
-        _folderHistory = BuildFolderHistory(userState);
-        RefreshFolderHistoryDropdown();
+        _folderHistory = BuildFolderHistory(userState.FolderHistory, userState.LastUsedFolder);
+        _renamedFolderHistory = BuildFolderHistory(userState.RenamedFolderHistory, userState.LastUsedRenamedFolder);
+        _failedFolderHistory = BuildFolderHistory(userState.FailedFolderHistory, userState.LastUsedFailedFolder);
+        _auditLogFolderHistory = BuildFolderHistory(userState.AuditLogFolderHistory, userState.LastUsedAuditLogFolder);
+        RefreshFolderHistoryDropdown(folderPathComboBox, _folderHistory);
+        RefreshFolderHistoryDropdown(renamedFolderComboBox, _renamedFolderHistory);
+        RefreshFolderHistoryDropdown(failedFolderComboBox, _failedFolderHistory);
+        RefreshFolderHistoryDropdown(auditLogFolderComboBox, _auditLogFolderHistory);
         if (!string.IsNullOrWhiteSpace(userState.LastUsedRenamedFolder) && Directory.Exists(userState.LastUsedRenamedFolder))
         {
             _lastUsedRenamedFolder = NormalizeFolderPathForState(userState.LastUsedRenamedFolder);
@@ -291,23 +300,26 @@ public partial class MainForm : Form
                 logMessage: $"Using default folder: {settings.DefaultFolder}");
         }
 
-        ApplyStartupOutputFolder(
-            renamedFolderTextBox,
+        var activeRenamedFolder = ApplyStartupOutputFolder(
+            renamedFolderComboBox,
             _lastUsedRenamedFolder,
             settings.RenamedFolder,
             "renamed PDFs");
+        EnsureActiveFolderInHistory(renamedFolderComboBox, _renamedFolderHistory, activeRenamedFolder);
 
-        ApplyStartupOutputFolder(
-            failedFolderTextBox,
+        var activeFailedFolder = ApplyStartupOutputFolder(
+            failedFolderComboBox,
             _lastUsedFailedFolder,
             settings.FailedFolder,
             "failed PDFs");
+        EnsureActiveFolderInHistory(failedFolderComboBox, _failedFolderHistory, activeFailedFolder);
 
-        ApplyStartupOutputFolder(
-            auditLogFolderTextBox,
+        var activeAuditLogFolder = ApplyStartupOutputFolder(
+            auditLogFolderComboBox,
             _lastUsedAuditLogFolder,
             settings.AuditLogFolder,
             "audit log");
+        EnsureActiveFolderInHistory(auditLogFolderComboBox, _auditLogFolderHistory, activeAuditLogFolder);
     }
 
     private void ApplySelectedFolder(string folderPath, string? logMessage = null)
@@ -316,41 +328,42 @@ public partial class MainForm : Form
         AppendLog(logMessage ?? $"Folder selected: {folderPath}");
     }
 
-    private void ApplyFolderText(TextBox textBox, string folderPath, string logMessage)
+    private void ApplyFolderText(ComboBox comboBox, string folderPath, string logMessage)
     {
-        textBox.Text = folderPath;
+        comboBox.Text = folderPath;
         AppendLog(logMessage);
     }
 
-    private void ApplyStartupOutputFolder(
-        TextBox textBox,
+    private string? ApplyStartupOutputFolder(
+        ComboBox comboBox,
         string? lastUsedFolder,
         string? configuredFolder,
         string displayName)
     {
         if (!string.IsNullOrWhiteSpace(lastUsedFolder) && Directory.Exists(lastUsedFolder))
         {
-            textBox.Text = lastUsedFolder;
+            comboBox.Text = lastUsedFolder;
             AppendLog($"Using last used {displayName} folder: {lastUsedFolder}");
-            return;
+            return lastUsedFolder;
         }
 
         if (string.IsNullOrWhiteSpace(configuredFolder))
         {
-            textBox.Text = string.Empty;
+            comboBox.Text = string.Empty;
             AppendLog($"The settings file '{SettingsFileName}' does not define a usable {displayName} folder value.");
-            return;
+            return null;
         }
 
         if (!Directory.Exists(configuredFolder))
         {
-            textBox.Text = string.Empty;
+            comboBox.Text = string.Empty;
             AppendLog($"The configured {displayName} folder does not exist: {configuredFolder}");
-            return;
+            return null;
         }
 
-        textBox.Text = configuredFolder;
+        comboBox.Text = configuredFolder;
         AppendLog($"Using default {displayName} folder: {configuredFolder}");
+        return configuredFolder;
     }
 
     private void SaveFolderUsage(string folderPath, string renamedFolderPath, string failedFolderPath, string auditLogFolderPath)
@@ -373,24 +386,30 @@ public partial class MainForm : Form
         }
 
         _folderHistory = updatedHistory;
-        RefreshFolderHistoryDropdown();
+        RefreshFolderHistoryDropdown(folderPathComboBox, _folderHistory);
         folderPathComboBox.Text = normalizedFolderPath;
         if (Directory.Exists(renamedFolderPath))
         {
             _lastUsedRenamedFolder = NormalizeFolderPathForState(renamedFolderPath);
-            renamedFolderTextBox.Text = _lastUsedRenamedFolder;
+            _renamedFolderHistory = MoveFolderToHistoryFront(_renamedFolderHistory, _lastUsedRenamedFolder);
+            RefreshFolderHistoryDropdown(renamedFolderComboBox, _renamedFolderHistory);
+            renamedFolderComboBox.Text = _lastUsedRenamedFolder;
         }
 
         if (Directory.Exists(failedFolderPath))
         {
             _lastUsedFailedFolder = NormalizeFolderPathForState(failedFolderPath);
-            failedFolderTextBox.Text = _lastUsedFailedFolder;
+            _failedFolderHistory = MoveFolderToHistoryFront(_failedFolderHistory, _lastUsedFailedFolder);
+            RefreshFolderHistoryDropdown(failedFolderComboBox, _failedFolderHistory);
+            failedFolderComboBox.Text = _lastUsedFailedFolder;
         }
 
         if (Directory.Exists(auditLogFolderPath))
         {
             _lastUsedAuditLogFolder = NormalizeFolderPathForState(auditLogFolderPath);
-            auditLogFolderTextBox.Text = _lastUsedAuditLogFolder;
+            _auditLogFolderHistory = MoveFolderToHistoryFront(_auditLogFolderHistory, _lastUsedAuditLogFolder);
+            RefreshFolderHistoryDropdown(auditLogFolderComboBox, _auditLogFolderHistory);
+            auditLogFolderComboBox.Text = _lastUsedAuditLogFolder;
         }
 
         TrySaveUserState(new UserState
@@ -399,7 +418,10 @@ public partial class MainForm : Form
             FolderHistory = _folderHistory.ToArray(),
             LastUsedRenamedFolder = _lastUsedRenamedFolder,
             LastUsedFailedFolder = _lastUsedFailedFolder,
-            LastUsedAuditLogFolder = _lastUsedAuditLogFolder
+            LastUsedAuditLogFolder = _lastUsedAuditLogFolder,
+            RenamedFolderHistory = _renamedFolderHistory.ToArray(),
+            FailedFolderHistory = _failedFolderHistory.ToArray(),
+            AuditLogFolderHistory = _auditLogFolderHistory.ToArray()
         });
     }
 
@@ -422,24 +444,24 @@ public partial class MainForm : Form
         return false;
     }
 
-    private void RefreshFolderHistoryDropdown()
+    private static void RefreshFolderHistoryDropdown(ComboBox comboBox, IReadOnlyList<string> history)
     {
-        folderPathComboBox.BeginUpdate();
+        comboBox.BeginUpdate();
         try
         {
-            folderPathComboBox.Items.Clear();
-            folderPathComboBox.Items.AddRange(_folderHistory.Cast<object>().ToArray());
+            comboBox.Items.Clear();
+            comboBox.Items.AddRange(history.Cast<object>().ToArray());
         }
         finally
         {
-            folderPathComboBox.EndUpdate();
+            comboBox.EndUpdate();
         }
     }
 
-    private static List<string> BuildFolderHistory(UserState userState)
+    private static List<string> BuildFolderHistory(IReadOnlyList<string> savedHistory, string? activeFolder)
     {
         var history = new List<string>();
-        foreach (var folderPath in userState.FolderHistory)
+        foreach (var folderPath in savedHistory)
         {
             AddFolderToHistory(history, folderPath);
             if (history.Count == MaxFolderHistoryEntries)
@@ -448,20 +470,62 @@ public partial class MainForm : Form
             }
         }
 
-        var lastUsedFolder = string.IsNullOrWhiteSpace(userState.LastUsedFolder)
+        var activeFolderPath = string.IsNullOrWhiteSpace(activeFolder)
             ? string.Empty
-            : NormalizeFolderPathForState(userState.LastUsedFolder);
+            : NormalizeFolderPathForState(activeFolder);
 
-        if (!string.IsNullOrWhiteSpace(lastUsedFolder)
-            && Directory.Exists(lastUsedFolder)
-            && !history.Contains(lastUsedFolder, StringComparer.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(activeFolderPath)
+            && Directory.Exists(activeFolderPath)
+            && !history.Contains(activeFolderPath, StringComparer.OrdinalIgnoreCase))
         {
-            history.Insert(0, lastUsedFolder);
+            history.Insert(0, activeFolderPath);
         }
 
         return history
             .Take(MaxFolderHistoryEntries)
             .ToList();
+    }
+
+    private static void EnsureActiveFolderInHistory(ComboBox comboBox, List<string> history, string? activeFolder)
+    {
+        if (string.IsNullOrWhiteSpace(activeFolder) || !Directory.Exists(activeFolder))
+        {
+            return;
+        }
+
+        var normalizedFolderPath = NormalizeFolderPathForState(activeFolder);
+        if (!history.Contains(normalizedFolderPath, StringComparer.OrdinalIgnoreCase))
+        {
+            history.Insert(0, normalizedFolderPath);
+            if (history.Count > MaxFolderHistoryEntries)
+            {
+                history.RemoveRange(MaxFolderHistoryEntries, history.Count - MaxFolderHistoryEntries);
+            }
+        }
+
+        RefreshFolderHistoryDropdown(comboBox, history);
+    }
+
+    private static List<string> MoveFolderToHistoryFront(IReadOnlyList<string> history, string folderPath)
+    {
+        var normalizedFolderPath = NormalizeFolderPathForState(folderPath);
+        var updatedHistory = new List<string> { normalizedFolderPath };
+
+        foreach (var existingFolder in history)
+        {
+            if (updatedHistory.Contains(existingFolder, StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            updatedHistory.Add(existingFolder);
+            if (updatedHistory.Count == MaxFolderHistoryEntries)
+            {
+                break;
+            }
+        }
+
+        return updatedHistory;
     }
 
     private static void AddFolderToHistory(List<string> history, string? folderPath)
@@ -612,9 +676,9 @@ public partial class MainForm : Form
         processFolderButton.Enabled = enabled && Directory.Exists(folderPathComboBox.Text.Trim());
         processSingleFileButton.Enabled = enabled;
         folderPathComboBox.Enabled = enabled;
-        renamedFolderTextBox.Enabled = enabled;
-        failedFolderTextBox.Enabled = enabled;
-        auditLogFolderTextBox.Enabled = enabled;
+        renamedFolderComboBox.Enabled = enabled;
+        failedFolderComboBox.Enabled = enabled;
+        auditLogFolderComboBox.Enabled = enabled;
         dryRunCheckBox.Enabled = enabled;
     }
 
@@ -623,9 +687,9 @@ public partial class MainForm : Form
 
     private bool TryReadProcessingFolders(out string renamedFolderPath, out string failedFolderPath, out string auditLogFolderPath)
     {
-        renamedFolderPath = renamedFolderTextBox.Text.Trim();
-        failedFolderPath = failedFolderTextBox.Text.Trim();
-        auditLogFolderPath = auditLogFolderTextBox.Text.Trim();
+        renamedFolderPath = renamedFolderComboBox.Text.Trim();
+        failedFolderPath = failedFolderComboBox.Text.Trim();
+        auditLogFolderPath = auditLogFolderComboBox.Text.Trim();
 
         if (string.IsNullOrWhiteSpace(renamedFolderPath))
         {
@@ -693,5 +757,11 @@ public partial class MainForm : Form
         public string? LastUsedAuditLogFolder { get; init; }
 
         public string[] FolderHistory { get; init; } = [];
+
+        public string[] RenamedFolderHistory { get; init; } = [];
+
+        public string[] FailedFolderHistory { get; init; } = [];
+
+        public string[] AuditLogFolderHistory { get; init; } = [];
     }
 }

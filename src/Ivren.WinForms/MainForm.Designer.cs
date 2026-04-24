@@ -10,13 +10,13 @@ partial class MainForm
     private ComboBox folderPathComboBox;
     private Button browseFolderButton;
     private Label renamedFolderLabel;
-    private TextBox renamedFolderTextBox;
+    private ComboBox renamedFolderComboBox;
     private Button browseRenamedFolderButton;
     private Label failedFolderLabel;
-    private TextBox failedFolderTextBox;
+    private ComboBox failedFolderComboBox;
     private Button browseFailedFolderButton;
     private Label auditLogFolderLabel;
-    private TextBox auditLogFolderTextBox;
+    private ComboBox auditLogFolderComboBox;
     private Button browseAuditLogFolderButton;
     private Button processFolderButton;
     private Button processSingleFileButton;
@@ -46,13 +46,13 @@ partial class MainForm
         folderPathComboBox = new ComboBox();
         browseFolderButton = new Button();
         renamedFolderLabel = new Label();
-        renamedFolderTextBox = new TextBox();
+        renamedFolderComboBox = new ComboBox();
         browseRenamedFolderButton = new Button();
         failedFolderLabel = new Label();
-        failedFolderTextBox = new TextBox();
+        failedFolderComboBox = new ComboBox();
         browseFailedFolderButton = new Button();
         auditLogFolderLabel = new Label();
-        auditLogFolderTextBox = new TextBox();
+        auditLogFolderComboBox = new ComboBox();
         browseAuditLogFolderButton = new Button();
         processFolderButton = new Button();
         processSingleFileButton = new Button();
@@ -102,13 +102,13 @@ partial class MainForm
         commandPanel.Controls.Add(browseFolderButton, 2, 0);
         commandPanel.Controls.Add(actionPanel, 3, 0);
         commandPanel.Controls.Add(renamedFolderLabel, 0, 1);
-        commandPanel.Controls.Add(renamedFolderTextBox, 1, 1);
+        commandPanel.Controls.Add(renamedFolderComboBox, 1, 1);
         commandPanel.Controls.Add(browseRenamedFolderButton, 2, 1);
         commandPanel.Controls.Add(failedFolderLabel, 0, 2);
-        commandPanel.Controls.Add(failedFolderTextBox, 1, 2);
+        commandPanel.Controls.Add(failedFolderComboBox, 1, 2);
         commandPanel.Controls.Add(browseFailedFolderButton, 2, 2);
         commandPanel.Controls.Add(auditLogFolderLabel, 0, 3);
-        commandPanel.Controls.Add(auditLogFolderTextBox, 1, 3);
+        commandPanel.Controls.Add(auditLogFolderComboBox, 1, 3);
         commandPanel.Controls.Add(browseAuditLogFolderButton, 2, 3);
         commandPanel.Dock = DockStyle.Fill;
         commandPanel.Location = new Point(15, 15);
@@ -178,14 +178,16 @@ partial class MainForm
         renamedFolderLabel.TabIndex = 4;
         renamedFolderLabel.Text = "Renamed PDFs folder:";
         // 
-        // renamedFolderTextBox
+        // renamedFolderComboBox
         // 
-        renamedFolderTextBox.Anchor = AnchorStyles.Left | AnchorStyles.Right;
-        renamedFolderTextBox.Location = new Point(138, 40);
-        renamedFolderTextBox.Margin = new Padding(3, 5, 8, 3);
-        renamedFolderTextBox.Name = "renamedFolderTextBox";
-        renamedFolderTextBox.Size = new Size(513, 23);
-        renamedFolderTextBox.TabIndex = 5;
+        renamedFolderComboBox.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        renamedFolderComboBox.DropDownStyle = ComboBoxStyle.DropDown;
+        renamedFolderComboBox.FormattingEnabled = true;
+        renamedFolderComboBox.Location = new Point(138, 40);
+        renamedFolderComboBox.Margin = new Padding(3, 5, 8, 3);
+        renamedFolderComboBox.Name = "renamedFolderComboBox";
+        renamedFolderComboBox.Size = new Size(513, 23);
+        renamedFolderComboBox.TabIndex = 5;
         // 
         // browseRenamedFolderButton
         // 
@@ -208,14 +210,16 @@ partial class MainForm
         failedFolderLabel.TabIndex = 7;
         failedFolderLabel.Text = "Failed PDFs folder:";
         // 
-        // failedFolderTextBox
+        // failedFolderComboBox
         // 
-        failedFolderTextBox.Anchor = AnchorStyles.Left | AnchorStyles.Right;
-        failedFolderTextBox.Location = new Point(138, 75);
-        failedFolderTextBox.Margin = new Padding(3, 5, 8, 3);
-        failedFolderTextBox.Name = "failedFolderTextBox";
-        failedFolderTextBox.Size = new Size(513, 23);
-        failedFolderTextBox.TabIndex = 8;
+        failedFolderComboBox.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        failedFolderComboBox.DropDownStyle = ComboBoxStyle.DropDown;
+        failedFolderComboBox.FormattingEnabled = true;
+        failedFolderComboBox.Location = new Point(138, 75);
+        failedFolderComboBox.Margin = new Padding(3, 5, 8, 3);
+        failedFolderComboBox.Name = "failedFolderComboBox";
+        failedFolderComboBox.Size = new Size(513, 23);
+        failedFolderComboBox.TabIndex = 8;
         // 
         // browseFailedFolderButton
         // 
@@ -238,14 +242,16 @@ partial class MainForm
         auditLogFolderLabel.TabIndex = 10;
         auditLogFolderLabel.Text = "Audit log folder:";
         // 
-        // auditLogFolderTextBox
+        // auditLogFolderComboBox
         // 
-        auditLogFolderTextBox.Anchor = AnchorStyles.Left | AnchorStyles.Right;
-        auditLogFolderTextBox.Location = new Point(138, 110);
-        auditLogFolderTextBox.Margin = new Padding(3, 5, 8, 3);
-        auditLogFolderTextBox.Name = "auditLogFolderTextBox";
-        auditLogFolderTextBox.Size = new Size(513, 23);
-        auditLogFolderTextBox.TabIndex = 11;
+        auditLogFolderComboBox.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        auditLogFolderComboBox.DropDownStyle = ComboBoxStyle.DropDown;
+        auditLogFolderComboBox.FormattingEnabled = true;
+        auditLogFolderComboBox.Location = new Point(138, 110);
+        auditLogFolderComboBox.Margin = new Padding(3, 5, 8, 3);
+        auditLogFolderComboBox.Name = "auditLogFolderComboBox";
+        auditLogFolderComboBox.Size = new Size(513, 23);
+        auditLogFolderComboBox.TabIndex = 11;
         // 
         // browseAuditLogFolderButton
         // 
