@@ -8,6 +8,14 @@ obj/
 # Visual Studio
 .vs/
 
+# a working tree gyokereben levo ___ (korabban x) nevu mappa olyan jatszoter, amit nem trackelunk; a /pg mappa meg olyan, amit igen.
+/___/
+
+# a barhol levo NOT_IN_repo nevu mappa (nevebol is kikovetkeztethetoen) nem kerul be a repoba.
+# NOT_IN_repo/
+[Nn][Oo][Tt][\-_][Ii][Nn][\-_][Rr][Ee][Pp][Oo]/
+
+
 # User-specific files
 *.user
 *.suo
