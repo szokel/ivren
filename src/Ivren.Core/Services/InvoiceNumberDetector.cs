@@ -55,6 +55,10 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         @"[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-\d{4}-\d{4,}",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
+    private static readonly Regex DateLikeCandidateRegex = new(
+        @"^\d{4}[./-]\d{2}[./-]\d{2}$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private static readonly string[] StandaloneInvoiceHeadingRejectedContinuations =
     [
         "szam",
@@ -168,7 +172,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                 continue;
             }
 
-            for (var offset = 1; offset <= 4 && index + offset < textExtractionResult.Tokens.Count; offset++)
+            for (var offset = 1; offset <= 8 && index + offset < textExtractionResult.Tokens.Count; offset++)
             {
                 if (TryReadCandidateValue(textExtractionResult.Tokens[index + offset], out var candidate))
                 {
@@ -411,7 +415,8 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
 
     private static bool IsValidInvoiceNumberCandidate(string? invoiceNumber)
         => !string.IsNullOrWhiteSpace(invoiceNumber)
-            && invoiceNumber.Any(char.IsDigit);
+            && invoiceNumber.Any(char.IsDigit)
+            && !DateLikeCandidateRegex.IsMatch(invoiceNumber);
 
     private static bool IsValidStandaloneHeadingCandidate(string? invoiceNumber)
     {
