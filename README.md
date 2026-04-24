@@ -1,4 +1,4 @@
-# ivren – Invoice Renamer
+# ivren - Invoice PDF Renamer
 
 Bejövő számlák PDF-fájljaink tartalom szerinti átnevezését végző szoftver.
 
