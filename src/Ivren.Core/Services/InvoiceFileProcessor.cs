@@ -11,6 +11,7 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
     private readonly IInvoiceNumberDetector _invoiceNumberDetector;
     private readonly IFilenameSanitizer _filenameSanitizer;
     private readonly IFileRenameService _fileRenameService;
+    private readonly IAuditLogService _auditLogService;
 
     public InvoiceFileProcessor(
         IPdfAnalysisService pdfAnalysisService,
@@ -18,7 +19,8 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
         ITextExtractionService textExtractionService,
         IInvoiceNumberDetector invoiceNumberDetector,
         IFilenameSanitizer filenameSanitizer,
-        IFileRenameService fileRenameService)
+        IFileRenameService fileRenameService,
+        IAuditLogService? auditLogService = null)
     {
         _pdfAnalysisService = pdfAnalysisService;
         _xmlInvoiceDataExtractor = xmlInvoiceDataExtractor;
@@ -26,12 +28,18 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
         _invoiceNumberDetector = invoiceNumberDetector;
         _filenameSanitizer = filenameSanitizer;
         _fileRenameService = fileRenameService;
+        _auditLogService = auditLogService ?? new JsonLinesAuditLogService();
     }
 
     public InvoiceFileProcessingResult Process(string filePath, InvoiceFileProcessingOptions? options = null)
     {
         options ??= new InvoiceFileProcessingOptions();
         var messages = new List<string>();
+        InvoiceFileProcessingResult Complete(InvoiceFileProcessingResult result, string? error = null)
+        {
+            WriteAuditLogIfNeeded(options, result, messages, error);
+            return result;
+        }
 
         try
         {
@@ -68,7 +76,7 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                 {
                     AddDryRunFailedMoveMessages(messages, failedTargetPath);
 
-                    return new InvoiceFileProcessingResult(
+                    return Complete(new InvoiceFileProcessingResult(
                         filePath,
                         FileProcessStatus.Failed,
                         detectionResult.Source,
@@ -78,13 +86,13 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                         true,
                         true,
                         false,
-                        messages);
+                        messages));
                 }
 
                 var failedMoveResult = MoveFailedFile(filePath, options);
                 messages.Add(failedMoveResult.Message);
 
-                return new InvoiceFileProcessingResult(
+                return Complete(new InvoiceFileProcessingResult(
                     filePath,
                     FileProcessStatus.Failed,
                     detectionResult.Source,
@@ -94,7 +102,7 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                     options.DryRun,
                     false,
                     failedMoveResult.Renamed,
-                    messages);
+                    messages));
             }
 
             var sanitizedFileName = _filenameSanitizer.Sanitize(detectionResult.InvoiceNumber);
@@ -107,7 +115,7 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                 {
                     AddDryRunFailedMoveMessages(messages, failedTargetPath);
 
-                    return new InvoiceFileProcessingResult(
+                    return Complete(new InvoiceFileProcessingResult(
                         filePath,
                         FileProcessStatus.Failed,
                         detectionResult.Source,
@@ -117,13 +125,13 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                         options.DryRun,
                         true,
                         false,
-                        messages);
+                        messages));
                 }
 
                 var failedMoveResult = MoveFailedFile(filePath, options);
                 messages.Add(failedMoveResult.Message);
 
-                return new InvoiceFileProcessingResult(
+                return Complete(new InvoiceFileProcessingResult(
                     filePath,
                     FileProcessStatus.Failed,
                     detectionResult.Source,
@@ -133,7 +141,7 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                     options.DryRun,
                     false,
                     failedMoveResult.Renamed,
-                    messages);
+                    messages));
             }
 
             var targetFilePath = BuildSuccessfulTargetFilePath(filePath, sanitizedFileName, options);
@@ -144,7 +152,7 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
             {
                 messages.Add("File move and rename skipped because dry-run mode is enabled.");
 
-                return new InvoiceFileProcessingResult(
+                return Complete(new InvoiceFileProcessingResult(
                     filePath,
                     FileProcessStatus.Success,
                     detectionResult.Source,
@@ -154,7 +162,7 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                     true,
                     true,
                     false,
-                    messages);
+                    messages));
             }
 
             var renameResult = RenameSuccessfulFile(filePath, sanitizedFileName, options);
@@ -164,7 +172,7 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                 var failedMoveResult = MoveFailedFile(filePath, options);
                 messages.Add(failedMoveResult.Message);
 
-                return new InvoiceFileProcessingResult(
+                return Complete(new InvoiceFileProcessingResult(
                     filePath,
                     FileProcessStatus.Failed,
                     detectionResult.Source,
@@ -174,10 +182,10 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                     options.DryRun,
                     false,
                     failedMoveResult.Renamed,
-                    messages);
+                    messages));
             }
 
-            return new InvoiceFileProcessingResult(
+            return Complete(new InvoiceFileProcessingResult(
                 filePath,
                 FileProcessStatus.Success,
                 detectionResult.Source,
@@ -187,13 +195,13 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                 options.DryRun,
                 false,
                 renameResult.Renamed,
-                messages);
+                messages));
         }
         catch (Exception exception)
         {
             messages.Add($"Unhandled processing error: {exception.Message}");
 
-            return new InvoiceFileProcessingResult(
+            return Complete(new InvoiceFileProcessingResult(
                 filePath,
                 FileProcessStatus.Failed,
                 DetectionSource.None,
@@ -203,7 +211,8 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                 options.DryRun,
                 false,
                 false,
-                messages);
+                messages),
+                exception.Message);
         }
     }
 
@@ -270,5 +279,42 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
 
         messages.Add($"Failed-file target path: {failedTargetPath}");
         messages.Add("Failed-file move skipped because dry-run mode is enabled.");
+    }
+
+    private void WriteAuditLogIfNeeded(
+        InvoiceFileProcessingOptions options,
+        InvoiceFileProcessingResult result,
+        List<string> messages,
+        string? error)
+    {
+        if (options.DryRun)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(options.AuditLogFolderPath))
+        {
+            messages.Add("Audit log entry was not written because no audit log folder was configured.");
+            return;
+        }
+
+        var entry = new InvoiceAuditLogEntry(
+            DateTimeOffset.Now,
+            result.SourceFilePath,
+            result.Status == FileProcessStatus.Success ? "Renamed" : "Failed",
+            result.DetectionSource,
+            result.InvoiceNumber,
+            result.TargetFilePath,
+            result.DryRunEnabled,
+            result.Status == FileProcessStatus.Success,
+            result.Summary,
+            error);
+
+        var auditResult = _auditLogService.Write(options.AuditLogFolderPath, entry);
+        messages.Add(auditResult.Message);
+        if (!string.IsNullOrWhiteSpace(auditResult.Error))
+        {
+            messages.Add($"Audit log error: {auditResult.Error}");
+        }
     }
 }

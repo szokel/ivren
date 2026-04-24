@@ -22,6 +22,7 @@ static class Program
         var invoiceNumberDetector = new InvoiceNumberDetector();
         var filenameSanitizer = new WindowsFilenameSanitizer();
         var fileRenameService = new FileRenameService();
+        var auditLogService = new JsonLinesAuditLogService();
 
         return new InvoiceFileProcessor(
             pdfAnalysisService,
@@ -29,6 +30,7 @@ static class Program
             textExtractionService,
             invoiceNumberDetector,
             filenameSanitizer,
-            fileRenameService);
+            fileRenameService,
+            auditLogService);
     }
 }

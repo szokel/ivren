@@ -13,6 +13,7 @@ public partial class MainForm : Form
     private List<string> _folderHistory = [];
     private string? _lastUsedRenamedFolder;
     private string? _lastUsedFailedFolder;
+    private string? _lastUsedAuditLogFolder;
 
     public MainForm(IInvoiceFileProcessor invoiceFileProcessor)
     {
@@ -104,6 +105,14 @@ public partial class MainForm : Form
         }
     }
 
+    private void browseAuditLogFolderButton_Click(object sender, EventArgs e)
+    {
+        if (TryBrowseForFolder("Select the folder for audit log files.", auditLogFolderTextBox.Text, out var selectedPath))
+        {
+            ApplyFolderText(auditLogFolderTextBox, selectedPath, $"Audit log folder selected: {selectedPath}");
+        }
+    }
+
     private async void processFolderButton_Click(object sender, EventArgs e)
     {
         var folderPath = folderPathComboBox.Text.Trim();
@@ -113,12 +122,12 @@ public partial class MainForm : Form
             return;
         }
 
-        if (!TryReadProcessingFolders(out var renamedFolderPath, out var failedFolderPath))
+        if (!TryReadProcessingFolders(out var renamedFolderPath, out var failedFolderPath, out var auditLogFolderPath))
         {
             return;
         }
 
-        SaveFolderUsage(folderPath, renamedFolderPath, failedFolderPath);
+        SaveFolderUsage(folderPath, renamedFolderPath, failedFolderPath, auditLogFolderPath);
 
         var pdfFiles = Directory.GetFiles(folderPath, "*.pdf", SearchOption.TopDirectoryOnly)
             .OrderBy(static x => x, StringComparer.OrdinalIgnoreCase)
@@ -153,7 +162,7 @@ public partial class MainForm : Form
             return;
         }
 
-        if (!TryReadProcessingFolders(out _, out _))
+        if (!TryReadProcessingFolders(out _, out _, out _))
         {
             return;
         }
@@ -180,7 +189,8 @@ public partial class MainForm : Form
         var options = new InvoiceFileProcessingOptions(
             dryRunCheckBox.Checked,
             EmptyToNull(renamedFolderTextBox.Text.Trim()),
-            EmptyToNull(failedFolderTextBox.Text.Trim()));
+            EmptyToNull(failedFolderTextBox.Text.Trim()),
+            EmptyToNull(auditLogFolderTextBox.Text.Trim()));
 
         foreach (var filePath in filePaths)
         {
@@ -247,6 +257,11 @@ public partial class MainForm : Form
             _lastUsedFailedFolder = NormalizeFolderPathForState(userState.LastUsedFailedFolder);
         }
 
+        if (!string.IsNullOrWhiteSpace(userState.LastUsedAuditLogFolder) && Directory.Exists(userState.LastUsedAuditLogFolder))
+        {
+            _lastUsedAuditLogFolder = NormalizeFolderPathForState(userState.LastUsedAuditLogFolder);
+        }
+
         TryLoadStartupSettings(out var settings);
 
         if (userStateLoaded
@@ -287,6 +302,12 @@ public partial class MainForm : Form
             _lastUsedFailedFolder,
             settings.FailedFolder,
             "failed PDFs");
+
+        ApplyStartupOutputFolder(
+            auditLogFolderTextBox,
+            _lastUsedAuditLogFolder,
+            settings.AuditLogFolder,
+            "audit log");
     }
 
     private void ApplySelectedFolder(string folderPath, string? logMessage = null)
@@ -332,7 +353,7 @@ public partial class MainForm : Form
         AppendLog($"Using default {displayName} folder: {configuredFolder}");
     }
 
-    private void SaveFolderUsage(string folderPath, string renamedFolderPath, string failedFolderPath)
+    private void SaveFolderUsage(string folderPath, string renamedFolderPath, string failedFolderPath, string auditLogFolderPath)
     {
         var normalizedFolderPath = NormalizeFolderPathForState(folderPath);
         var updatedHistory = new List<string> { normalizedFolderPath };
@@ -366,12 +387,19 @@ public partial class MainForm : Form
             failedFolderTextBox.Text = _lastUsedFailedFolder;
         }
 
+        if (Directory.Exists(auditLogFolderPath))
+        {
+            _lastUsedAuditLogFolder = NormalizeFolderPathForState(auditLogFolderPath);
+            auditLogFolderTextBox.Text = _lastUsedAuditLogFolder;
+        }
+
         TrySaveUserState(new UserState
         {
             LastUsedFolder = normalizedFolderPath,
             FolderHistory = _folderHistory.ToArray(),
             LastUsedRenamedFolder = _lastUsedRenamedFolder,
-            LastUsedFailedFolder = _lastUsedFailedFolder
+            LastUsedFailedFolder = _lastUsedFailedFolder,
+            LastUsedAuditLogFolder = _lastUsedAuditLogFolder
         });
     }
 
@@ -580,21 +608,24 @@ public partial class MainForm : Form
         browseFolderButton.Enabled = enabled;
         browseRenamedFolderButton.Enabled = enabled;
         browseFailedFolderButton.Enabled = enabled;
+        browseAuditLogFolderButton.Enabled = enabled;
         processFolderButton.Enabled = enabled && Directory.Exists(folderPathComboBox.Text.Trim());
         processSingleFileButton.Enabled = enabled;
         folderPathComboBox.Enabled = enabled;
         renamedFolderTextBox.Enabled = enabled;
         failedFolderTextBox.Enabled = enabled;
+        auditLogFolderTextBox.Enabled = enabled;
         dryRunCheckBox.Enabled = enabled;
     }
 
     private static string? EmptyToNull(string value)
         => string.IsNullOrWhiteSpace(value) ? null : value;
 
-    private bool TryReadProcessingFolders(out string renamedFolderPath, out string failedFolderPath)
+    private bool TryReadProcessingFolders(out string renamedFolderPath, out string failedFolderPath, out string auditLogFolderPath)
     {
         renamedFolderPath = renamedFolderTextBox.Text.Trim();
         failedFolderPath = failedFolderTextBox.Text.Trim();
+        auditLogFolderPath = auditLogFolderTextBox.Text.Trim();
 
         if (string.IsNullOrWhiteSpace(renamedFolderPath))
         {
@@ -613,6 +644,12 @@ public partial class MainForm : Form
             return true;
         }
 
+        if (string.IsNullOrWhiteSpace(auditLogFolderPath))
+        {
+            MessageBox.Show(this, "Please enter the audit log folder.", "Audit Log Folder Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
+        }
+
         if (!Directory.Exists(renamedFolderPath))
         {
             MessageBox.Show(this, "The renamed PDFs folder must exist before non-dry-run processing.", "Renamed Folder Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -622,6 +659,12 @@ public partial class MainForm : Form
         if (!Directory.Exists(failedFolderPath))
         {
             MessageBox.Show(this, "The failed PDFs folder must exist before non-dry-run processing.", "Failed Folder Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
+        }
+
+        if (!Directory.Exists(auditLogFolderPath))
+        {
+            MessageBox.Show(this, "The audit log folder must exist before non-dry-run processing.", "Audit Log Folder Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return false;
         }
 
@@ -635,6 +678,8 @@ public partial class MainForm : Form
         public string? RenamedFolder { get; init; }
 
         public string? FailedFolder { get; init; }
+
+        public string? AuditLogFolder { get; init; }
     }
 
     private sealed class UserState
@@ -644,6 +689,8 @@ public partial class MainForm : Form
         public string? LastUsedRenamedFolder { get; init; }
 
         public string? LastUsedFailedFolder { get; init; }
+
+        public string? LastUsedAuditLogFolder { get; init; }
 
         public string[] FolderHistory { get; init; } = [];
     }

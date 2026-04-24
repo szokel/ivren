@@ -15,6 +15,9 @@ partial class MainForm
     private Label failedFolderLabel;
     private TextBox failedFolderTextBox;
     private Button browseFailedFolderButton;
+    private Label auditLogFolderLabel;
+    private TextBox auditLogFolderTextBox;
+    private Button browseAuditLogFolderButton;
     private Button processFolderButton;
     private Button processSingleFileButton;
     private CheckBox dryRunCheckBox;
@@ -48,6 +51,9 @@ partial class MainForm
         failedFolderLabel = new Label();
         failedFolderTextBox = new TextBox();
         browseFailedFolderButton = new Button();
+        auditLogFolderLabel = new Label();
+        auditLogFolderTextBox = new TextBox();
+        browseAuditLogFolderButton = new Button();
         processFolderButton = new Button();
         processSingleFileButton = new Button();
         dryRunCheckBox = new CheckBox();
@@ -101,14 +107,18 @@ partial class MainForm
         commandPanel.Controls.Add(failedFolderLabel, 0, 2);
         commandPanel.Controls.Add(failedFolderTextBox, 1, 2);
         commandPanel.Controls.Add(browseFailedFolderButton, 2, 2);
+        commandPanel.Controls.Add(auditLogFolderLabel, 0, 3);
+        commandPanel.Controls.Add(auditLogFolderTextBox, 1, 3);
+        commandPanel.Controls.Add(browseAuditLogFolderButton, 2, 3);
         commandPanel.Dock = DockStyle.Fill;
         commandPanel.Location = new Point(15, 15);
         commandPanel.Name = "commandPanel";
-        commandPanel.RowCount = 3;
+        commandPanel.RowCount = 4;
         commandPanel.RowStyles.Add(new RowStyle());
         commandPanel.RowStyles.Add(new RowStyle());
         commandPanel.RowStyles.Add(new RowStyle());
-        commandPanel.Size = new Size(1154, 105);
+        commandPanel.RowStyles.Add(new RowStyle());
+        commandPanel.Size = new Size(1154, 140);
         commandPanel.TabIndex = 0;
         // 
         // actionPanel
@@ -217,6 +227,36 @@ partial class MainForm
         browseFailedFolderButton.UseVisualStyleBackColor = true;
         browseFailedFolderButton.Click += browseFailedFolderButton_Click;
         // 
+        // auditLogFolderLabel
+        // 
+        auditLogFolderLabel.Anchor = AnchorStyles.Left;
+        auditLogFolderLabel.AutoSize = true;
+        auditLogFolderLabel.Location = new Point(3, 115);
+        auditLogFolderLabel.Margin = new Padding(3, 8, 8, 0);
+        auditLogFolderLabel.Name = "auditLogFolderLabel";
+        auditLogFolderLabel.Size = new Size(94, 15);
+        auditLogFolderLabel.TabIndex = 10;
+        auditLogFolderLabel.Text = "Audit log folder:";
+        // 
+        // auditLogFolderTextBox
+        // 
+        auditLogFolderTextBox.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        auditLogFolderTextBox.Location = new Point(138, 110);
+        auditLogFolderTextBox.Margin = new Padding(3, 5, 8, 3);
+        auditLogFolderTextBox.Name = "auditLogFolderTextBox";
+        auditLogFolderTextBox.Size = new Size(513, 23);
+        auditLogFolderTextBox.TabIndex = 11;
+        // 
+        // browseAuditLogFolderButton
+        // 
+        browseAuditLogFolderButton.Location = new Point(659, 108);
+        browseAuditLogFolderButton.Name = "browseAuditLogFolderButton";
+        browseAuditLogFolderButton.Size = new Size(110, 29);
+        browseAuditLogFolderButton.TabIndex = 12;
+        browseAuditLogFolderButton.Text = "Browse";
+        browseAuditLogFolderButton.UseVisualStyleBackColor = true;
+        browseAuditLogFolderButton.Click += browseAuditLogFolderButton_Click;
+        // 
         // processFolderButton
         // 
         processFolderButton.Location = new Point(3, 3);
@@ -253,7 +293,7 @@ partial class MainForm
         // resultsLabel
         // 
         resultsLabel.AutoSize = true;
-        resultsLabel.Location = new Point(15, 123);
+        resultsLabel.Location = new Point(15, 158);
         resultsLabel.Name = "resultsLabel";
         resultsLabel.Padding = new Padding(0, 8, 0, 4);
         resultsLabel.Size = new Size(45, 27);
@@ -268,19 +308,19 @@ partial class MainForm
         resultsGrid.BackgroundColor = SystemColors.Window;
         resultsGrid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
         resultsGrid.Dock = DockStyle.Fill;
-        resultsGrid.Location = new Point(15, 153);
+        resultsGrid.Location = new Point(15, 188);
         resultsGrid.MultiSelect = false;
         resultsGrid.Name = "resultsGrid";
         resultsGrid.ReadOnly = true;
         resultsGrid.RowHeadersVisible = false;
         resultsGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-        resultsGrid.Size = new Size(1154, 284);
+        resultsGrid.Size = new Size(1154, 263);
         resultsGrid.TabIndex = 2;
         // 
         // logLabel
         // 
         logLabel.AutoSize = true;
-        logLabel.Location = new Point(15, 440);
+        logLabel.Location = new Point(15, 454);
         logLabel.Name = "logLabel";
         logLabel.Padding = new Padding(0, 8, 0, 4);
         logLabel.Size = new Size(28, 27);
@@ -290,12 +330,12 @@ partial class MainForm
         // logTextBox
         // 
         logTextBox.Dock = DockStyle.Fill;
-        logTextBox.Location = new Point(15, 470);
+        logTextBox.Location = new Point(15, 484);
         logTextBox.Multiline = true;
         logTextBox.Name = "logTextBox";
         logTextBox.ReadOnly = true;
         logTextBox.ScrollBars = ScrollBars.Both;
-        logTextBox.Size = new Size(1154, 176);
+        logTextBox.Size = new Size(1154, 162);
         logTextBox.TabIndex = 4;
         logTextBox.WordWrap = false;
         // 
