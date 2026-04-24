@@ -61,6 +61,32 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         @"^\d{4}[./-]\d{2}[./-]\d{2}$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    private static readonly Regex BankAccountLabelRegex = new(
+        @"\b(?:account\s+(?:no|number)|bankszamla|bankszamlaszam)\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly Regex BankBlockHeadingRegex = new(
+        @"\b(?:banki\s+adatok|bank\s+details)\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly Regex BankCredentialRegex = new(
+        @"\b(?:iban|swift|bic)\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly HashSet<string> TableHeaderColumnsBeforeInvoiceNumber = new(StringComparer.Ordinal)
+    {
+        "referencia szam",
+        "reference no",
+        "szamla kelte",
+        "invoice date",
+        "teljesites datuma",
+        "performance date",
+        "fizetesi hatarido",
+        "term of payment",
+        "fizetesi mod",
+        "way of payment"
+    };
+
     private static readonly string[] StandaloneInvoiceHeadingRejectedContinuations =
     [
         "szam",
@@ -156,12 +182,25 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
             var token = textExtractionResult.Tokens[index];
             var normalized = NormalizeForComparison(token);
 
+            if (IsBankAccountInvoiceLabelContext(textExtractionResult.Tokens, index, normalized))
+            {
+                continue;
+            }
+
             if (TryExtractCandidateFromLabeledToken(token, normalized, options, out var inlineCandidate))
             {
                 return InvoiceNumberDetectionResult.Found(
                     inlineCandidate,
                     DetectionSource.Text,
                     "Invoice number detected from labeled PDF text.");
+            }
+
+            if (TryReadCandidateFromBilingualInvoiceTable(textExtractionResult.Tokens, index, options, out var tableCandidate))
+            {
+                return InvoiceNumberDetectionResult.Found(
+                    tableCandidate,
+                    DetectionSource.Text,
+                    "Invoice number detected from a bilingual invoice-number table header.");
             }
 
             if (TryReadCandidateAfterStandaloneInvoiceHeading(textExtractionResult.Tokens, index, options, out var standaloneHeadingCandidate))
@@ -205,7 +244,8 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         if (regexMatch.Success)
         {
             var fallbackCandidate = CleanCandidate(regexMatch.Groups["value"].Value);
-            if (IsValidInvoiceNumberCandidate(fallbackCandidate, options))
+            if (IsValidInvoiceNumberCandidate(fallbackCandidate, options)
+                && !IsBankAccountTextContext(NormalizeForComparison(textExtractionResult.FullText), regexMatch.Index))
             {
                 return InvoiceNumberDetectionResult.Found(
                     fallbackCandidate,
@@ -279,6 +319,81 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         }
 
         return TryReadStandaloneHeadingCandidateFromFollowingTokens(tokens, candidateStartIndex, 40, options, out invoiceNumber);
+    }
+
+    private static bool TryReadCandidateFromBilingualInvoiceTable(
+        IReadOnlyList<string> tokens,
+        int labelIndex,
+        InvoiceDetectionOptions options,
+        out string invoiceNumber)
+    {
+        invoiceNumber = string.Empty;
+        if (!LooksLikeBilingualInvoiceNumberHeader(tokens, labelIndex, out var labelEndIndex)
+            || IsBankAccountInvoiceLabelContext(tokens, labelIndex, NormalizeForComparison(tokens[labelIndex])))
+        {
+            return false;
+        }
+
+        var precedingColumns = CountPrecedingTableColumns(tokens, labelIndex);
+        if (precedingColumns == 0)
+        {
+            return false;
+        }
+
+        var candidateIndex = labelEndIndex + 1 + precedingColumns;
+        if (candidateIndex >= tokens.Count)
+        {
+            return false;
+        }
+
+        return TryReadCandidateValue(tokens[candidateIndex], options, out invoiceNumber);
+    }
+
+    private static bool LooksLikeBilingualInvoiceNumberHeader(
+        IReadOnlyList<string> tokens,
+        int labelIndex,
+        out int labelEndIndex)
+    {
+        labelEndIndex = labelIndex;
+        var normalized = NormalizeForComparison(tokens[labelIndex]);
+
+        if (normalized.Contains("szamlaszam invoice no", StringComparison.Ordinal)
+            || normalized.Contains("szamla szama invoice number", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (!IsHungarianInvoiceNumberLabel(normalized) || labelIndex + 1 >= tokens.Count)
+        {
+            return false;
+        }
+
+        var next = NormalizeHeaderLabel(tokens[labelIndex + 1]);
+        if (next is "invoice no" or "invoice number")
+        {
+            labelEndIndex = labelIndex + 1;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static int CountPrecedingTableColumns(IReadOnlyList<string> tokens, int labelIndex)
+    {
+        const int maxHeaderLookbehind = 14;
+        var count = 0;
+        var startIndex = Math.Max(0, labelIndex - maxHeaderLookbehind);
+
+        for (var index = startIndex; index < labelIndex; index++)
+        {
+            var normalized = NormalizeHeaderLabel(tokens[index]);
+            if (TableHeaderColumnsBeforeInvoiceNumber.Contains(normalized))
+            {
+                count++;
+            }
+        }
+
+        return count / 2;
     }
 
     private static bool TryReadStandaloneInvoiceHeading(
@@ -389,6 +504,47 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
 
     private static bool LooksLikeFocusedInvoiceLabel(string normalizedToken)
         => FocusedInvoiceLabelRegex.IsMatch(normalizedToken);
+
+    private static bool IsHungarianInvoiceNumberLabel(string normalizedToken)
+        => normalizedToken is "szamlaszam" or "szamla szama" or "szamla sorszama" or "sorszam";
+
+    private static string NormalizeHeaderLabel(string value)
+        => NormalizeForComparison(value).Trim('.', ',', ';', ':');
+
+    private static bool IsBankAccountInvoiceLabelContext(
+        IReadOnlyList<string> tokens,
+        int labelIndex,
+        string normalizedToken)
+    {
+        if (!LooksLikeInvoiceLabel(normalizedToken))
+        {
+            return false;
+        }
+
+        if (BankAccountLabelRegex.IsMatch(normalizedToken))
+        {
+            return true;
+        }
+
+        var startIndex = Math.Max(0, labelIndex - 8);
+        var endIndex = Math.Min(tokens.Count - 1, labelIndex + 6);
+        var context = string.Join(
+            ' ',
+            Enumerable.Range(startIndex, endIndex - startIndex + 1)
+                .Select(index => NormalizeForComparison(tokens[index])));
+
+        return BankBlockHeadingRegex.IsMatch(context) || BankCredentialRegex.IsMatch(context);
+    }
+
+    private static bool IsBankAccountTextContext(string normalizedFullText, int matchIndex)
+    {
+        var startIndex = Math.Max(0, matchIndex - 120);
+        var length = Math.Min(normalizedFullText.Length - startIndex, 240);
+        var context = normalizedFullText.Substring(startIndex, length);
+        return BankAccountLabelRegex.IsMatch(context)
+            || BankBlockHeadingRegex.IsMatch(context)
+            || BankCredentialRegex.IsMatch(context);
+    }
 
     private static bool TryReadCandidateValue(string rawValue, out string invoiceNumber)
         => TryReadCandidateValue(rawValue, DefaultDetectionOptions, out invoiceNumber);
