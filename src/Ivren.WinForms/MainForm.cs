@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Ivren.Core.Contracts;
 using Ivren.Core.Models;
@@ -24,6 +25,7 @@ public partial class MainForm : Form
 
         InitializeComponent();
         ConfigureResultsGrid();
+        resultsGrid.CellDoubleClick += resultsGrid_CellDoubleClick;
         folderPathComboBox.TextChanged += (_, _) => UpdateProcessFolderButtonState();
         InitializeStartupFolders();
         UpdateProcessFolderButtonState();
@@ -224,7 +226,7 @@ public partial class MainForm : Form
                 ? "Moved"
                 : "Not Renamed";
 
-        resultsGrid.Rows.Add(
+        var rowIndex = resultsGrid.Rows.Add(
             Path.GetFileName(result.SourceFilePath),
             result.Status.ToString(),
             result.DetectionSource.ToString(),
@@ -232,6 +234,58 @@ public partial class MainForm : Form
             targetPath,
             renameAction,
             result.Summary);
+
+        resultsGrid.Rows[rowIndex].Tag = new ResultRowFilePaths(
+            result.SourceFilePath,
+            result.TargetFilePath);
+    }
+
+    private void resultsGrid_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.RowIndex >= resultsGrid.Rows.Count)
+        {
+            return;
+        }
+
+        if (resultsGrid.Rows[e.RowIndex].Tag is not ResultRowFilePaths filePaths)
+        {
+            AppendLog("Could not open PDF because the selected result row has no file path information.");
+            return;
+        }
+
+        var filePath = ResolveOpenableResultFilePath(filePaths);
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            AppendLog($"Could not open PDF. Neither target nor original file exists. Original: {filePaths.SourceFilePath}; Target: {filePaths.TargetFilePath ?? "(none)"}");
+            MessageBox.Show(this, "The PDF file could not be found. It may have been moved or deleted.", "PDF Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(filePath)
+            {
+                UseShellExecute = true
+            });
+            AppendLog($"Opened PDF: {filePath}");
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            AppendLog($"Could not open PDF: {filePath}. {exception.Message}");
+            MessageBox.Show(this, $"The PDF file could not be opened.\n\n{exception.Message}", "Open PDF Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private static string? ResolveOpenableResultFilePath(ResultRowFilePaths filePaths)
+    {
+        if (!string.IsNullOrWhiteSpace(filePaths.TargetFilePath) && File.Exists(filePaths.TargetFilePath))
+        {
+            return filePaths.TargetFilePath;
+        }
+
+        return File.Exists(filePaths.SourceFilePath)
+            ? filePaths.SourceFilePath
+            : null;
     }
 
     private void AppendLog(string message)
@@ -787,4 +841,8 @@ public partial class MainForm : Form
 
         public string[] AuditLogFolderHistory { get; init; } = [];
     }
+
+    private sealed record ResultRowFilePaths(
+        string SourceFilePath,
+        string? TargetFilePath);
 }
