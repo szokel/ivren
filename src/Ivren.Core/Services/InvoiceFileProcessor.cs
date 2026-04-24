@@ -12,6 +12,7 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
     private readonly IFilenameSanitizer _filenameSanitizer;
     private readonly IFileRenameService _fileRenameService;
     private readonly IAuditLogService _auditLogService;
+    private readonly ISupplierProfileProvider _supplierProfileProvider;
 
     public InvoiceFileProcessor(
         IPdfAnalysisService pdfAnalysisService,
@@ -20,7 +21,8 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
         IInvoiceNumberDetector invoiceNumberDetector,
         IFilenameSanitizer filenameSanitizer,
         IFileRenameService fileRenameService,
-        IAuditLogService? auditLogService = null)
+        IAuditLogService? auditLogService = null,
+        ISupplierProfileProvider? supplierProfileProvider = null)
     {
         _pdfAnalysisService = pdfAnalysisService;
         _xmlInvoiceDataExtractor = xmlInvoiceDataExtractor;
@@ -29,6 +31,7 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
         _filenameSanitizer = filenameSanitizer;
         _fileRenameService = fileRenameService;
         _auditLogService = auditLogService ?? new JsonLinesAuditLogService();
+        _supplierProfileProvider = supplierProfileProvider ?? new JsonSupplierProfileProvider();
     }
 
     public InvoiceFileProcessingResult Process(string filePath, InvoiceFileProcessingOptions? options = null)
@@ -103,7 +106,12 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                 var textResult = _textExtractionService.Extract(analysisResult);
                 messages.AddRange(textResult.Messages);
 
-                detectionResult = _invoiceNumberDetector.DetectFromText(textResult);
+                var supplierProfileSelection = _supplierProfileProvider.SelectProfile(xmlResult, textResult);
+                messages.Add(supplierProfileSelection.Message);
+
+                detectionResult = _invoiceNumberDetector.DetectFromText(
+                    textResult,
+                    supplierProfileSelection.Profile.ToDetectionOptions());
                 messages.Add(detectionResult.Message);
             }
 

@@ -5,5 +5,7 @@ namespace Ivren.Core.Contracts;
 public interface IInvoiceNumberDetector
 {
     InvoiceNumberDetectionResult DetectFromXml(XmlInvoiceExtractionResult xmlExtractionResult);
-    InvoiceNumberDetectionResult DetectFromText(TextExtractionResult textExtractionResult);
+    InvoiceNumberDetectionResult DetectFromText(
+        TextExtractionResult textExtractionResult,
+        InvoiceDetectionOptions? options = null);
 }

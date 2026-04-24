@@ -5,6 +5,8 @@ namespace Ivren.WinForms;
 
 static class Program
 {
+    private const string SupplierProfilesFileName = "Ivren.SupplierProfiles.json";
+
     [STAThread]
     static void Main()
     {
@@ -23,6 +25,8 @@ static class Program
         var filenameSanitizer = new WindowsFilenameSanitizer();
         var fileRenameService = new FileRenameService();
         var auditLogService = new JsonLinesAuditLogService();
+        var supplierProfileProvider = new JsonSupplierProfileProvider(
+            Path.Combine(AppContext.BaseDirectory, SupplierProfilesFileName));
 
         return new InvoiceFileProcessor(
             pdfAnalysisService,
@@ -31,6 +35,7 @@ static class Program
             invoiceNumberDetector,
             filenameSanitizer,
             fileRenameService,
-            auditLogService);
+            auditLogService,
+            supplierProfileProvider);
     }
 }

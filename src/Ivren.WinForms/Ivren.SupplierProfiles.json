@@ -1,0 +1,14 @@
+{
+  "Default": {
+    "NearbyLabelScanWindow": 4,
+    "RejectDateLikeCandidates": true
+  },
+  "Suppliers": [
+    {
+      "Name": "Seculabs Kft.",
+      "TaxNumber": "29272967-2-42",
+      "NearbyLabelScanWindow": 8,
+      "RejectDateLikeCandidates": true
+    }
+  ]
+}

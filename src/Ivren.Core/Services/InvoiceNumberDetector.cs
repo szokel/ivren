@@ -9,6 +9,8 @@ namespace Ivren.Core.Services;
 
 public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
 {
+    private static readonly InvoiceDetectionOptions DefaultDetectionOptions = new();
+
     private const string InvoiceLabelPattern =
         @"invoice\s*number|invoice\s*no|szamlaszam|szamla\s*sorszama|szamla\s*szama|sorszam";
 
@@ -135,9 +137,12 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         return InvoiceNumberDetectionResult.NotFound(DetectionSource.Xml, "No invoice number could be detected from embedded XML data.");
     }
 
-    public InvoiceNumberDetectionResult DetectFromText(TextExtractionResult textExtractionResult)
+    public InvoiceNumberDetectionResult DetectFromText(
+        TextExtractionResult textExtractionResult,
+        InvoiceDetectionOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(textExtractionResult);
+        options ??= DefaultDetectionOptions;
 
         if (textExtractionResult.Tokens.Count == 0)
         {
@@ -151,7 +156,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
             var token = textExtractionResult.Tokens[index];
             var normalized = NormalizeForComparison(token);
 
-            if (TryExtractCandidateFromLabeledToken(token, normalized, out var inlineCandidate))
+            if (TryExtractCandidateFromLabeledToken(token, normalized, options, out var inlineCandidate))
             {
                 return InvoiceNumberDetectionResult.Found(
                     inlineCandidate,
@@ -159,7 +164,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                     "Invoice number detected from labeled PDF text.");
             }
 
-            if (TryReadCandidateAfterStandaloneInvoiceHeading(textExtractionResult.Tokens, index, out var standaloneHeadingCandidate))
+            if (TryReadCandidateAfterStandaloneInvoiceHeading(textExtractionResult.Tokens, index, options, out var standaloneHeadingCandidate))
             {
                 return InvoiceNumberDetectionResult.Found(
                     standaloneHeadingCandidate,
@@ -172,9 +177,9 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                 continue;
             }
 
-            for (var offset = 1; offset <= 8 && index + offset < textExtractionResult.Tokens.Count; offset++)
+            for (var offset = 1; offset <= options.NearbyLabelScanWindow && index + offset < textExtractionResult.Tokens.Count; offset++)
             {
-                if (TryReadCandidateValue(textExtractionResult.Tokens[index + offset], out var candidate))
+                if (TryReadCandidateValue(textExtractionResult.Tokens[index + offset], options, out var candidate))
                 {
                     return InvoiceNumberDetectionResult.Found(
                         candidate,
@@ -183,7 +188,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                 }
             }
 
-            if (TryReadCandidateValueFromAdjacentTokens(textExtractionResult.Tokens, index + 1, 4, out var adjacentCandidate))
+            if (TryReadCandidateValueFromAdjacentTokens(textExtractionResult.Tokens, index + 1, options.NearbyLabelScanWindow, options, out var adjacentCandidate))
             {
                 return InvoiceNumberDetectionResult.Found(
                     adjacentCandidate,
@@ -200,7 +205,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         if (regexMatch.Success)
         {
             var fallbackCandidate = CleanCandidate(regexMatch.Groups["value"].Value);
-            if (IsValidInvoiceNumberCandidate(fallbackCandidate))
+            if (IsValidInvoiceNumberCandidate(fallbackCandidate, options))
             {
                 return InvoiceNumberDetectionResult.Found(
                     fallbackCandidate,
@@ -226,7 +231,11 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         }
     }
 
-    private static bool TryExtractCandidateFromLabeledToken(string token, string normalizedToken, out string invoiceNumber)
+    private static bool TryExtractCandidateFromLabeledToken(
+        string token,
+        string normalizedToken,
+        InvoiceDetectionOptions options,
+        out string invoiceNumber)
     {
         if (!LooksLikeInvoiceLabel(normalizedToken))
         {
@@ -245,7 +254,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         foreach (Match rawCandidateMatch in InvoiceCandidateRegex.Matches(token))
         {
             var rawCandidate = CleanCandidate(rawCandidateMatch.Value);
-            if (!IsValidInvoiceNumberCandidate(rawCandidate))
+            if (!IsValidInvoiceNumberCandidate(rawCandidate, options))
             {
                 continue;
             }
@@ -254,12 +263,13 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
             break;
         }
 
-        return IsValidInvoiceNumberCandidate(invoiceNumber);
+        return IsValidInvoiceNumberCandidate(invoiceNumber, options);
     }
 
     private static bool TryReadCandidateAfterStandaloneInvoiceHeading(
         IReadOnlyList<string> tokens,
         int headingStartIndex,
+        InvoiceDetectionOptions options,
         out string invoiceNumber)
     {
         if (!TryReadStandaloneInvoiceHeading(tokens, headingStartIndex, out var candidateStartIndex))
@@ -268,7 +278,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
             return false;
         }
 
-        return TryReadStandaloneHeadingCandidateFromFollowingTokens(tokens, candidateStartIndex, 40, out invoiceNumber);
+        return TryReadStandaloneHeadingCandidateFromFollowingTokens(tokens, candidateStartIndex, 40, options, out invoiceNumber);
     }
 
     private static bool TryReadStandaloneInvoiceHeading(
@@ -321,6 +331,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         IReadOnlyList<string> tokens,
         int startIndex,
         int maxTokenCount,
+        InvoiceDetectionOptions options,
         out string invoiceNumber)
     {
         var builder = new StringBuilder();
@@ -347,7 +358,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
             }
 
             builder.Append(token);
-            if (TryReadStandaloneHeadingCandidate(builder.ToString(), out var candidate))
+            if (TryReadStandaloneHeadingCandidate(builder.ToString(), options, out var candidate))
             {
                 bestCandidate = candidate;
             }
@@ -357,7 +368,10 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         return !string.IsNullOrWhiteSpace(invoiceNumber);
     }
 
-    private static bool TryReadStandaloneHeadingCandidate(string rawValue, out string invoiceNumber)
+    private static bool TryReadStandaloneHeadingCandidate(
+        string rawValue,
+        InvoiceDetectionOptions options,
+        out string invoiceNumber)
     {
         var match = StandaloneHeadingInvoiceCandidateRegex.Match(rawValue);
         if (!match.Success)
@@ -367,7 +381,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         }
 
         invoiceNumber = CleanCandidate(match.Value);
-        return IsValidStandaloneHeadingCandidate(invoiceNumber);
+        return IsValidStandaloneHeadingCandidate(invoiceNumber, options);
     }
 
     private static bool LooksLikeInvoiceLabel(string normalizedToken)
@@ -377,6 +391,12 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         => FocusedInvoiceLabelRegex.IsMatch(normalizedToken);
 
     private static bool TryReadCandidateValue(string rawValue, out string invoiceNumber)
+        => TryReadCandidateValue(rawValue, DefaultDetectionOptions, out invoiceNumber);
+
+    private static bool TryReadCandidateValue(
+        string rawValue,
+        InvoiceDetectionOptions options,
+        out string invoiceNumber)
     {
         var match = InvoiceCandidateRegex.Match(rawValue);
         if (!match.Success)
@@ -386,13 +406,14 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         }
 
         invoiceNumber = CleanCandidate(match.Value);
-        return IsValidInvoiceNumberCandidate(invoiceNumber);
+        return IsValidInvoiceNumberCandidate(invoiceNumber, options);
     }
 
     private static bool TryReadCandidateValueFromAdjacentTokens(
         IReadOnlyList<string> tokens,
         int startIndex,
         int maxTokenCount,
+        InvoiceDetectionOptions options,
         out string invoiceNumber)
     {
         var builder = new StringBuilder();
@@ -401,7 +422,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         {
             builder.Append(tokens[startIndex + offset]);
 
-            if (!TryReadCandidateValue(builder.ToString(), out invoiceNumber))
+            if (!TryReadCandidateValue(builder.ToString(), options, out invoiceNumber))
             {
                 continue;
             }
@@ -414,13 +435,16 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
     }
 
     private static bool IsValidInvoiceNumberCandidate(string? invoiceNumber)
+        => IsValidInvoiceNumberCandidate(invoiceNumber, DefaultDetectionOptions);
+
+    private static bool IsValidInvoiceNumberCandidate(string? invoiceNumber, InvoiceDetectionOptions options)
         => !string.IsNullOrWhiteSpace(invoiceNumber)
             && invoiceNumber.Any(char.IsDigit)
-            && !DateLikeCandidateRegex.IsMatch(invoiceNumber);
+            && (!options.RejectDateLikeCandidates || !DateLikeCandidateRegex.IsMatch(invoiceNumber));
 
-    private static bool IsValidStandaloneHeadingCandidate(string? invoiceNumber)
+    private static bool IsValidStandaloneHeadingCandidate(string? invoiceNumber, InvoiceDetectionOptions options)
     {
-        if (!IsValidInvoiceNumberCandidate(invoiceNumber))
+        if (!IsValidInvoiceNumberCandidate(invoiceNumber, options))
         {
             return false;
         }
