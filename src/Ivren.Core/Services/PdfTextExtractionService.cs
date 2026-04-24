@@ -28,7 +28,12 @@ public sealed class PdfTextExtractionService : ITextExtractionService
             .Where(static x => !string.IsNullOrWhiteSpace(x))
             .ToArray();
 
-        var fullText = RepairHungarianFragmentedWords(string.Join(" ", tokens));
+        var joinedText = string.Join(" ", tokens);
+        var fullText = LooksLikeCharacterSpacedText(joinedText)
+            ? CollapseCharacterSpacedText(joinedText)
+            : joinedText;
+
+        fullText = RepairHungarianFragmentedWords(fullText);
         var messages = new List<string> { $"Text extraction produced {tokens.Length} normalized token(s)." };
 
         return new TextExtractionResult(tokens, fullText, messages);

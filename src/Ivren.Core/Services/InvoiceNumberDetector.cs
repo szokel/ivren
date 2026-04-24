@@ -51,6 +51,19 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         $@"^(?:{InvoiceLabelPattern})",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
+    private static readonly Regex StandaloneHeadingInvoiceCandidateRegex = new(
+        @"[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-\d{4}-\d{4,}",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly string[] StandaloneInvoiceHeadingRejectedContinuations =
+    [
+        "szam",
+        "sorszam",
+        "kelte",
+        "datum",
+        "tartalma"
+    ];
+
     public InvoiceNumberDetectionResult DetectFromXml(XmlInvoiceExtractionResult xmlExtractionResult)
     {
         ArgumentNullException.ThrowIfNull(xmlExtractionResult);
@@ -140,6 +153,14 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                     inlineCandidate,
                     DetectionSource.Text,
                     "Invoice number detected from labeled PDF text.");
+            }
+
+            if (TryReadCandidateAfterStandaloneInvoiceHeading(textExtractionResult.Tokens, index, out var standaloneHeadingCandidate))
+            {
+                return InvoiceNumberDetectionResult.Found(
+                    standaloneHeadingCandidate,
+                    DetectionSource.Text,
+                    "Invoice number detected from text after a standalone invoice heading.");
             }
 
             if (!LooksLikeFocusedInvoiceLabel(normalized))
@@ -232,6 +253,119 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         return IsValidInvoiceNumberCandidate(invoiceNumber);
     }
 
+    private static bool TryReadCandidateAfterStandaloneInvoiceHeading(
+        IReadOnlyList<string> tokens,
+        int headingStartIndex,
+        out string invoiceNumber)
+    {
+        if (!TryReadStandaloneInvoiceHeading(tokens, headingStartIndex, out var candidateStartIndex))
+        {
+            invoiceNumber = string.Empty;
+            return false;
+        }
+
+        return TryReadStandaloneHeadingCandidateFromFollowingTokens(tokens, candidateStartIndex, 40, out invoiceNumber);
+    }
+
+    private static bool TryReadStandaloneInvoiceHeading(
+        IReadOnlyList<string> tokens,
+        int startIndex,
+        out int candidateStartIndex)
+    {
+        const string invoiceHeading = "szamla";
+
+        var normalizedToken = NormalizeForComparison(tokens[startIndex]);
+        if (normalizedToken == invoiceHeading)
+        {
+            candidateStartIndex = startIndex + 1;
+            return !NextTokensSpellAny(tokens, candidateStartIndex, StandaloneInvoiceHeadingRejectedContinuations);
+        }
+
+        var builder = new StringBuilder(invoiceHeading.Length);
+        var index = startIndex;
+
+        while (index < tokens.Count && builder.Length < invoiceHeading.Length)
+        {
+            var normalized = NormalizeForComparison(tokens[index]);
+            if (normalized.Length != 1 || !char.IsLetter(normalized[0]))
+            {
+                candidateStartIndex = -1;
+                return false;
+            }
+
+            builder.Append(normalized);
+            if (!invoiceHeading.StartsWith(builder.ToString(), StringComparison.Ordinal))
+            {
+                candidateStartIndex = -1;
+                return false;
+            }
+
+            index++;
+        }
+
+        if (builder.ToString() != invoiceHeading)
+        {
+            candidateStartIndex = -1;
+            return false;
+        }
+
+        candidateStartIndex = index;
+        return !NextTokensSpellAny(tokens, candidateStartIndex, StandaloneInvoiceHeadingRejectedContinuations);
+    }
+
+    private static bool TryReadStandaloneHeadingCandidateFromFollowingTokens(
+        IReadOnlyList<string> tokens,
+        int startIndex,
+        int maxTokenCount,
+        out string invoiceNumber)
+    {
+        var builder = new StringBuilder();
+        var bestCandidate = string.Empty;
+
+        for (var offset = 0; offset < maxTokenCount && startIndex + offset < tokens.Count; offset++)
+        {
+            var tokenIndex = startIndex + offset;
+            if (!string.IsNullOrWhiteSpace(bestCandidate) && LooksLikePageMarker(tokens, tokenIndex))
+            {
+                invoiceNumber = bestCandidate;
+                return true;
+            }
+
+            var token = tokens[tokenIndex];
+            if (!IsInvoiceCodeTokenPart(token))
+            {
+                if (builder.Length == 0)
+                {
+                    continue;
+                }
+
+                break;
+            }
+
+            builder.Append(token);
+            if (TryReadStandaloneHeadingCandidate(builder.ToString(), out var candidate))
+            {
+                bestCandidate = candidate;
+            }
+        }
+
+        invoiceNumber = bestCandidate;
+        return !string.IsNullOrWhiteSpace(invoiceNumber);
+    }
+
+    private static bool TryReadStandaloneHeadingCandidate(string rawValue, out string invoiceNumber)
+    {
+        var match = StandaloneHeadingInvoiceCandidateRegex.Match(rawValue);
+        if (!match.Success)
+        {
+            invoiceNumber = string.Empty;
+            return false;
+        }
+
+        invoiceNumber = CleanCandidate(match.Value);
+        return IsValidStandaloneHeadingCandidate(invoiceNumber);
+    }
+
     private static bool LooksLikeInvoiceLabel(string normalizedToken)
         => InvoiceLabelRegex.IsMatch(normalizedToken);
 
@@ -278,6 +412,62 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
     private static bool IsValidInvoiceNumberCandidate(string? invoiceNumber)
         => !string.IsNullOrWhiteSpace(invoiceNumber)
             && invoiceNumber.Any(char.IsDigit);
+
+    private static bool IsValidStandaloneHeadingCandidate(string? invoiceNumber)
+    {
+        if (!IsValidInvoiceNumberCandidate(invoiceNumber))
+        {
+            return false;
+        }
+
+        var candidate = invoiceNumber!;
+        return candidate.Any(char.IsLetter)
+            && candidate.Any(character => character is '-' or '/' or '_' or '.');
+    }
+
+    private static bool IsInvoiceCodeTokenPart(string token)
+        => token.All(character => char.IsLetterOrDigit(character) || character is '-' or '/' or '_' or '.');
+
+    private static bool LooksLikePageMarker(IReadOnlyList<string> tokens, int startIndex)
+        => startIndex + 2 < tokens.Count
+            && tokens[startIndex].Length == 1
+            && char.IsDigit(tokens[startIndex][0])
+            && tokens[startIndex + 1] == "/"
+            && tokens[startIndex + 2].Length == 1
+            && char.IsDigit(tokens[startIndex + 2][0]);
+
+    private static bool NextTokensSpellAny(
+        IReadOnlyList<string> tokens,
+        int startIndex,
+        IReadOnlyList<string> words)
+        => words.Any(word => NextTokensSpell(tokens, startIndex, word));
+
+    private static bool NextTokensSpell(IReadOnlyList<string> tokens, int startIndex, string word)
+    {
+        var builder = new StringBuilder(word.Length);
+
+        for (var index = startIndex; index < tokens.Count && builder.Length < word.Length; index++)
+        {
+            var normalized = NormalizeForComparison(tokens[index]);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                continue;
+            }
+
+            if (normalized.Length > word.Length - builder.Length)
+            {
+                return false;
+            }
+
+            builder.Append(normalized);
+            if (!word.StartsWith(builder.ToString(), StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return builder.ToString() == word;
+    }
 
     private static string CleanCandidate(string value)
         => value.Trim().Trim(':', ';', ',', '.', '-', '_', '/', '\\');
