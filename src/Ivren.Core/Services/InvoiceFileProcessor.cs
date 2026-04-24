@@ -38,7 +38,7 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
             messages.Add($"Processing started: {filePath}");
             if (options.DryRun)
             {
-                messages.Add("Dry-run mode is enabled. The file will be analyzed, but no rename will be executed.");
+                messages.Add("Dry-run mode is enabled. The file will be analyzed, but no file move or rename will be executed.");
             }
 
             var analysisResult = _pdfAnalysisService.Analyze(filePath);
@@ -62,6 +62,27 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
             if (!detectionResult.Success || string.IsNullOrWhiteSpace(detectionResult.InvoiceNumber))
             {
                 messages.Add("Processing failed because no invoice number could be determined.");
+                var failedTargetPath = BuildFailedTargetFilePath(filePath, options);
+
+                if (options.DryRun)
+                {
+                    AddDryRunFailedMoveMessages(messages, failedTargetPath);
+
+                    return new InvoiceFileProcessingResult(
+                        filePath,
+                        FileProcessStatus.Failed,
+                        detectionResult.Source,
+                        null,
+                        null,
+                        failedTargetPath,
+                        true,
+                        true,
+                        false,
+                        messages);
+                }
+
+                var failedMoveResult = MoveFailedFile(filePath, options);
+                messages.Add(failedMoveResult.Message);
 
                 return new InvoiceFileProcessingResult(
                     filePath,
@@ -69,10 +90,10 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                     detectionResult.Source,
                     null,
                     null,
-                    null,
+                    failedMoveResult.TargetFilePath,
                     options.DryRun,
                     false,
-                    false,
+                    failedMoveResult.Renamed,
                     messages);
             }
 
@@ -80,6 +101,27 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
             if (string.IsNullOrWhiteSpace(sanitizedFileName))
             {
                 messages.Add("Processing failed because the sanitized invoice number produced an empty file name.");
+                var failedTargetPath = BuildFailedTargetFilePath(filePath, options);
+
+                if (options.DryRun)
+                {
+                    AddDryRunFailedMoveMessages(messages, failedTargetPath);
+
+                    return new InvoiceFileProcessingResult(
+                        filePath,
+                        FileProcessStatus.Failed,
+                        detectionResult.Source,
+                        detectionResult.InvoiceNumber,
+                        null,
+                        failedTargetPath,
+                        options.DryRun,
+                        true,
+                        false,
+                        messages);
+                }
+
+                var failedMoveResult = MoveFailedFile(filePath, options);
+                messages.Add(failedMoveResult.Message);
 
                 return new InvoiceFileProcessingResult(
                     filePath,
@@ -87,20 +129,20 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                     detectionResult.Source,
                     detectionResult.InvoiceNumber,
                     null,
-                    null,
+                    failedMoveResult.TargetFilePath,
                     options.DryRun,
                     false,
-                    false,
+                    failedMoveResult.Renamed,
                     messages);
             }
 
-            var targetFilePath = BuildTargetFilePath(filePath, sanitizedFileName);
-            var targetFileName = Path.GetFileName(targetFilePath);
-            messages.Add($"Sanitized target file name: {targetFileName}");
+            var targetFilePath = BuildSuccessfulTargetFilePath(filePath, sanitizedFileName, options);
+            messages.Add($"Sanitized target file name: {sanitizedFileName}{Path.GetExtension(targetFilePath)}");
+            messages.Add($"Target file path: {targetFilePath}");
 
             if (options.DryRun)
             {
-                messages.Add("Rename skipped because dry-run mode is enabled.");
+                messages.Add("File move and rename skipped because dry-run mode is enabled.");
 
                 return new InvoiceFileProcessingResult(
                     filePath,
@@ -115,12 +157,29 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                     messages);
             }
 
-            var renameResult = _fileRenameService.Rename(filePath, sanitizedFileName);
+            var renameResult = RenameSuccessfulFile(filePath, sanitizedFileName, options);
             messages.Add(renameResult.Message);
+            if (!renameResult.Success)
+            {
+                var failedMoveResult = MoveFailedFile(filePath, options);
+                messages.Add(failedMoveResult.Message);
+
+                return new InvoiceFileProcessingResult(
+                    filePath,
+                    FileProcessStatus.Failed,
+                    detectionResult.Source,
+                    detectionResult.InvoiceNumber,
+                    sanitizedFileName,
+                    failedMoveResult.TargetFilePath ?? renameResult.TargetFilePath,
+                    options.DryRun,
+                    false,
+                    failedMoveResult.Renamed,
+                    messages);
+            }
 
             return new InvoiceFileProcessingResult(
                 filePath,
-                renameResult.Success ? FileProcessStatus.Success : FileProcessStatus.Failed,
+                FileProcessStatus.Success,
                 detectionResult.Source,
                 detectionResult.InvoiceNumber,
                 sanitizedFileName,
@@ -148,17 +207,68 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
         }
     }
 
-    private static string BuildTargetFilePath(string sourceFilePath, string targetFileNameWithoutExtension)
+    private string BuildSuccessfulTargetFilePath(
+        string sourceFilePath,
+        string targetFileNameWithoutExtension,
+        InvoiceFileProcessingOptions options)
     {
-        var sourceDirectory = Path.GetDirectoryName(sourceFilePath)
-            ?? throw new InvalidOperationException("The source directory could not be determined.");
+        var targetDirectory = string.IsNullOrWhiteSpace(options.RenamedFolderPath)
+            ? Path.GetDirectoryName(sourceFilePath)
+            : options.RenamedFolderPath;
 
-        var extension = Path.GetExtension(sourceFilePath);
-        if (string.IsNullOrWhiteSpace(extension))
+        if (string.IsNullOrWhiteSpace(targetDirectory))
         {
-            extension = ".pdf";
+            throw new InvalidOperationException("The successful-files target directory could not be determined.");
         }
 
-        return Path.Combine(sourceDirectory, targetFileNameWithoutExtension + extension);
+        return _fileRenameService.BuildTargetPath(sourceFilePath, targetDirectory, targetFileNameWithoutExtension);
+    }
+
+    private string? BuildFailedTargetFilePath(string sourceFilePath, InvoiceFileProcessingOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(options.FailedFolderPath))
+        {
+            return null;
+        }
+
+        return _fileRenameService.BuildTargetPathPreservingName(sourceFilePath, options.FailedFolderPath);
+    }
+
+    private FileRenameResult RenameSuccessfulFile(
+        string sourceFilePath,
+        string targetFileNameWithoutExtension,
+        InvoiceFileProcessingOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(options.RenamedFolderPath))
+        {
+            return _fileRenameService.Rename(sourceFilePath, targetFileNameWithoutExtension);
+        }
+
+        return _fileRenameService.RenameToFolder(
+            sourceFilePath,
+            options.RenamedFolderPath,
+            targetFileNameWithoutExtension);
+    }
+
+    private FileRenameResult MoveFailedFile(string sourceFilePath, InvoiceFileProcessingOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(options.FailedFolderPath))
+        {
+            return new FileRenameResult(false, false, null, "The failed file was not moved because no failed-files folder was configured.");
+        }
+
+        return _fileRenameService.MoveToFolderPreservingName(sourceFilePath, options.FailedFolderPath);
+    }
+
+    private static void AddDryRunFailedMoveMessages(List<string> messages, string? failedTargetPath)
+    {
+        if (string.IsNullOrWhiteSpace(failedTargetPath))
+        {
+            messages.Add("Failed-file move skipped because dry-run mode is enabled, but no failed-files folder is configured.");
+            return;
+        }
+
+        messages.Add($"Failed-file target path: {failedTargetPath}");
+        messages.Add("Failed-file move skipped because dry-run mode is enabled.");
     }
 }

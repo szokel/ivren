@@ -11,6 +11,8 @@ public partial class MainForm : Form
     private const int MaxFolderHistoryEntries = 10;
     private readonly IInvoiceFileProcessor _invoiceFileProcessor;
     private List<string> _folderHistory = [];
+    private string? _lastUsedRenamedFolder;
+    private string? _lastUsedFailedFolder;
 
     public MainForm(IInvoiceFileProcessor invoiceFileProcessor)
     {
@@ -19,7 +21,7 @@ public partial class MainForm : Form
         InitializeComponent();
         ConfigureResultsGrid();
         folderPathComboBox.TextChanged += (_, _) => UpdateProcessFolderButtonState();
-        InitializeStartupFolder();
+        InitializeStartupFolders();
         UpdateProcessFolderButtonState();
     }
 
@@ -57,7 +59,7 @@ public partial class MainForm : Form
         resultsGrid.Columns.Add(new DataGridViewTextBoxColumn
         {
             Name = "TargetFileName",
-            HeaderText = "Target File Name",
+            HeaderText = "Target Path",
             AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
             FillWeight = 25
         });
@@ -80,16 +82,25 @@ public partial class MainForm : Form
 
     private void browseFolderButton_Click(object sender, EventArgs e)
     {
-        using var dialog = new FolderBrowserDialog
+        if (TryBrowseForFolder("Select the folder that contains invoice PDFs.", folderPathComboBox.Text, out var selectedPath))
         {
-            Description = "Select the folder that contains invoice PDFs.",
-            InitialDirectory = Directory.Exists(folderPathComboBox.Text) ? folderPathComboBox.Text : string.Empty,
-            UseDescriptionForTitle = true
-        };
+            ApplySelectedFolder(selectedPath);
+        }
+    }
 
-        if (dialog.ShowDialog(this) == DialogResult.OK)
+    private void browseRenamedFolderButton_Click(object sender, EventArgs e)
+    {
+        if (TryBrowseForFolder("Select the folder for successfully renamed PDFs.", renamedFolderTextBox.Text, out var selectedPath))
         {
-            ApplySelectedFolder(dialog.SelectedPath);
+            ApplyFolderText(renamedFolderTextBox, selectedPath, $"Renamed PDFs folder selected: {selectedPath}");
+        }
+    }
+
+    private void browseFailedFolderButton_Click(object sender, EventArgs e)
+    {
+        if (TryBrowseForFolder("Select the folder for PDFs that could not be renamed.", failedFolderTextBox.Text, out var selectedPath))
+        {
+            ApplyFolderText(failedFolderTextBox, selectedPath, $"Failed PDFs folder selected: {selectedPath}");
         }
     }
 
@@ -102,7 +113,12 @@ public partial class MainForm : Form
             return;
         }
 
-        SaveFolderUsage(folderPath);
+        if (!TryReadProcessingFolders(out var renamedFolderPath, out var failedFolderPath))
+        {
+            return;
+        }
+
+        SaveFolderUsage(folderPath, renamedFolderPath, failedFolderPath);
 
         var pdfFiles = Directory.GetFiles(folderPath, "*.pdf", SearchOption.TopDirectoryOnly)
             .OrderBy(static x => x, StringComparer.OrdinalIgnoreCase)
@@ -137,6 +153,11 @@ public partial class MainForm : Form
             return;
         }
 
+        if (!TryReadProcessingFolders(out _, out _))
+        {
+            return;
+        }
+
         var selectedFolder = Path.GetDirectoryName(dialog.FileName);
         if (!string.IsNullOrWhiteSpace(selectedFolder))
         {
@@ -153,10 +174,13 @@ public partial class MainForm : Form
         logTextBox.Clear();
         AppendLog(startMessage);
         AppendLog(dryRunCheckBox.Checked
-            ? "Dry-run mode is enabled. Files will not be renamed."
-            : "Dry-run mode is disabled. Successful detections will rename files.");
+            ? "Dry-run mode is enabled. Files will not be moved or renamed."
+            : "Dry-run mode is disabled. Successful detections will move files to the renamed folder; failures will move to the failed folder.");
 
-        var options = new InvoiceFileProcessingOptions(dryRunCheckBox.Checked);
+        var options = new InvoiceFileProcessingOptions(
+            dryRunCheckBox.Checked,
+            EmptyToNull(renamedFolderTextBox.Text.Trim()),
+            EmptyToNull(failedFolderTextBox.Text.Trim()));
 
         foreach (var filePath in filePaths)
         {
@@ -178,13 +202,13 @@ public partial class MainForm : Form
 
     private void AddResultRow(InvoiceFileProcessingResult result)
     {
-        var targetFileName = string.IsNullOrWhiteSpace(result.TargetFilePath)
+        var targetPath = string.IsNullOrWhiteSpace(result.TargetFilePath)
             ? string.Empty
-            : Path.GetFileName(result.TargetFilePath);
+            : result.TargetFilePath;
         var renameAction = result.RenameSkippedDueToDryRun
             ? "Skipped (Dry Run)"
             : result.Renamed
-                ? "Renamed"
+                ? "Moved"
                 : "Not Renamed";
 
         resultsGrid.Rows.Add(
@@ -192,7 +216,7 @@ public partial class MainForm : Form
             result.Status.ToString(),
             result.DetectionSource.ToString(),
             result.InvoiceNumber ?? string.Empty,
-            targetFileName,
+            targetPath,
             renameAction,
             result.Summary);
     }
@@ -208,11 +232,22 @@ public partial class MainForm : Form
         logTextBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
     }
 
-    private void InitializeStartupFolder()
+    private void InitializeStartupFolders()
     {
         var userStateLoaded = TryLoadUserState(out var userState);
         _folderHistory = BuildFolderHistory(userState);
         RefreshFolderHistoryDropdown();
+        if (!string.IsNullOrWhiteSpace(userState.LastUsedRenamedFolder) && Directory.Exists(userState.LastUsedRenamedFolder))
+        {
+            _lastUsedRenamedFolder = NormalizeFolderPathForState(userState.LastUsedRenamedFolder);
+        }
+
+        if (!string.IsNullOrWhiteSpace(userState.LastUsedFailedFolder) && Directory.Exists(userState.LastUsedFailedFolder))
+        {
+            _lastUsedFailedFolder = NormalizeFolderPathForState(userState.LastUsedFailedFolder);
+        }
+
+        TryLoadStartupSettings(out var settings);
 
         if (userStateLoaded
             && !string.IsNullOrWhiteSpace(userState.LastUsedFolder)
@@ -221,35 +256,37 @@ public partial class MainForm : Form
             ApplySelectedFolder(
                 userState.LastUsedFolder,
                 logMessage: $"Using last used folder: {userState.LastUsedFolder}");
-            return;
         }
-
-        if (!TryLoadStartupSettings(out var settings))
+        else if (string.IsNullOrWhiteSpace(settings.DefaultFolder))
         {
             folderPathComboBox.Text = string.Empty;
             UpdateProcessFolderButtonState();
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(settings.DefaultFolder))
-        {
             AppendLog($"The settings file '{SettingsFileName}' does not define a usable DefaultFolder value.");
-            folderPathComboBox.Text = string.Empty;
-            UpdateProcessFolderButtonState();
-            return;
         }
-
-        if (!Directory.Exists(settings.DefaultFolder))
+        else if (!Directory.Exists(settings.DefaultFolder))
         {
             AppendLog($"The configured DefaultFolder does not exist: {settings.DefaultFolder}");
             folderPathComboBox.Text = string.Empty;
             UpdateProcessFolderButtonState();
-            return;
+        }
+        else
+        {
+            ApplySelectedFolder(
+                settings.DefaultFolder,
+                logMessage: $"Using default folder: {settings.DefaultFolder}");
         }
 
-        ApplySelectedFolder(
-            settings.DefaultFolder,
-            logMessage: $"Using default folder: {settings.DefaultFolder}");
+        ApplyStartupOutputFolder(
+            renamedFolderTextBox,
+            _lastUsedRenamedFolder,
+            settings.RenamedFolder,
+            "renamed PDFs");
+
+        ApplyStartupOutputFolder(
+            failedFolderTextBox,
+            _lastUsedFailedFolder,
+            settings.FailedFolder,
+            "failed PDFs");
     }
 
     private void ApplySelectedFolder(string folderPath, string? logMessage = null)
@@ -258,7 +295,44 @@ public partial class MainForm : Form
         AppendLog(logMessage ?? $"Folder selected: {folderPath}");
     }
 
-    private void SaveFolderUsage(string folderPath)
+    private void ApplyFolderText(TextBox textBox, string folderPath, string logMessage)
+    {
+        textBox.Text = folderPath;
+        AppendLog(logMessage);
+    }
+
+    private void ApplyStartupOutputFolder(
+        TextBox textBox,
+        string? lastUsedFolder,
+        string? configuredFolder,
+        string displayName)
+    {
+        if (!string.IsNullOrWhiteSpace(lastUsedFolder) && Directory.Exists(lastUsedFolder))
+        {
+            textBox.Text = lastUsedFolder;
+            AppendLog($"Using last used {displayName} folder: {lastUsedFolder}");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(configuredFolder))
+        {
+            textBox.Text = string.Empty;
+            AppendLog($"The settings file '{SettingsFileName}' does not define a usable {displayName} folder value.");
+            return;
+        }
+
+        if (!Directory.Exists(configuredFolder))
+        {
+            textBox.Text = string.Empty;
+            AppendLog($"The configured {displayName} folder does not exist: {configuredFolder}");
+            return;
+        }
+
+        textBox.Text = configuredFolder;
+        AppendLog($"Using default {displayName} folder: {configuredFolder}");
+    }
+
+    private void SaveFolderUsage(string folderPath, string renamedFolderPath, string failedFolderPath)
     {
         var normalizedFolderPath = NormalizeFolderPathForState(folderPath);
         var updatedHistory = new List<string> { normalizedFolderPath };
@@ -280,12 +354,44 @@ public partial class MainForm : Form
         _folderHistory = updatedHistory;
         RefreshFolderHistoryDropdown();
         folderPathComboBox.Text = normalizedFolderPath;
+        if (Directory.Exists(renamedFolderPath))
+        {
+            _lastUsedRenamedFolder = NormalizeFolderPathForState(renamedFolderPath);
+            renamedFolderTextBox.Text = _lastUsedRenamedFolder;
+        }
+
+        if (Directory.Exists(failedFolderPath))
+        {
+            _lastUsedFailedFolder = NormalizeFolderPathForState(failedFolderPath);
+            failedFolderTextBox.Text = _lastUsedFailedFolder;
+        }
 
         TrySaveUserState(new UserState
         {
             LastUsedFolder = normalizedFolderPath,
-            FolderHistory = _folderHistory.ToArray()
+            FolderHistory = _folderHistory.ToArray(),
+            LastUsedRenamedFolder = _lastUsedRenamedFolder,
+            LastUsedFailedFolder = _lastUsedFailedFolder
         });
+    }
+
+    private bool TryBrowseForFolder(string description, string currentPath, out string selectedPath)
+    {
+        using var dialog = new FolderBrowserDialog
+        {
+            Description = description,
+            InitialDirectory = Directory.Exists(currentPath) ? currentPath : string.Empty,
+            UseDescriptionForTitle = true
+        };
+
+        if (dialog.ShowDialog(this) == DialogResult.OK)
+        {
+            selectedPath = dialog.SelectedPath;
+            return true;
+        }
+
+        selectedPath = string.Empty;
+        return false;
     }
 
     private void RefreshFolderHistoryDropdown()
@@ -472,20 +578,72 @@ public partial class MainForm : Form
     private void ToggleUi(bool enabled)
     {
         browseFolderButton.Enabled = enabled;
+        browseRenamedFolderButton.Enabled = enabled;
+        browseFailedFolderButton.Enabled = enabled;
         processFolderButton.Enabled = enabled && Directory.Exists(folderPathComboBox.Text.Trim());
         processSingleFileButton.Enabled = enabled;
         folderPathComboBox.Enabled = enabled;
+        renamedFolderTextBox.Enabled = enabled;
+        failedFolderTextBox.Enabled = enabled;
         dryRunCheckBox.Enabled = enabled;
+    }
+
+    private static string? EmptyToNull(string value)
+        => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    private bool TryReadProcessingFolders(out string renamedFolderPath, out string failedFolderPath)
+    {
+        renamedFolderPath = renamedFolderTextBox.Text.Trim();
+        failedFolderPath = failedFolderTextBox.Text.Trim();
+
+        if (string.IsNullOrWhiteSpace(renamedFolderPath))
+        {
+            MessageBox.Show(this, "Please enter the renamed PDFs folder.", "Renamed Folder Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(failedFolderPath))
+        {
+            MessageBox.Show(this, "Please enter the failed PDFs folder.", "Failed Folder Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
+        }
+
+        if (dryRunCheckBox.Checked)
+        {
+            return true;
+        }
+
+        if (!Directory.Exists(renamedFolderPath))
+        {
+            MessageBox.Show(this, "The renamed PDFs folder must exist before non-dry-run processing.", "Renamed Folder Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
+        }
+
+        if (!Directory.Exists(failedFolderPath))
+        {
+            MessageBox.Show(this, "The failed PDFs folder must exist before non-dry-run processing.", "Failed Folder Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
+        }
+
+        return true;
     }
 
     private sealed class StartupSettings
     {
         public string? DefaultFolder { get; init; }
+
+        public string? RenamedFolder { get; init; }
+
+        public string? FailedFolder { get; init; }
     }
 
     private sealed class UserState
     {
         public string? LastUsedFolder { get; init; }
+
+        public string? LastUsedRenamedFolder { get; init; }
+
+        public string? LastUsedFailedFolder { get; init; }
 
         public string[] FolderHistory { get; init; } = [];
     }

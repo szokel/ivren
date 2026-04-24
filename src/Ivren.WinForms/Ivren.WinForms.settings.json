@@ -1,3 +1,5 @@
 {
-  "DefaultFolder": "C:\\repo\\ivren\\mintaszamla"
+  "DefaultFolder": "C:\\repo\\ivren\\mintaszamla",
+  "RenamedFolder": "C:\\repo\\ivren\\renamed",
+  "FailedFolder": "C:\\repo\\ivren\\failed"
 }
