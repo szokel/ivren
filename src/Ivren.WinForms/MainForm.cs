@@ -18,6 +18,7 @@ public partial class MainForm : Form
     private string? _lastUsedRenamedFolder;
     private string? _lastUsedFailedFolder;
     private string? _lastUsedAuditLogFolder;
+    private string? _selectedResultPdfPath;
 
     public MainForm(IInvoiceFileProcessor invoiceFileProcessor)
     {
@@ -286,6 +287,84 @@ public partial class MainForm : Form
         return File.Exists(filePaths.SourceFilePath)
             ? filePaths.SourceFilePath
             : null;
+    }
+
+    private void resultsGrid_MouseDown(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Right)
+        {
+            return;
+        }
+
+        var hitTest = resultsGrid.HitTest(e.X, e.Y);
+        if (hitTest.RowIndex < 0 || hitTest.RowIndex >= resultsGrid.Rows.Count)
+        {
+            _selectedResultPdfPath = null;
+            copyPdfPathMenuItem.Enabled = false;
+            openPdfLocationMenuItem.Enabled = false;
+            resultsContextMenu.Show(resultsGrid, e.Location);
+            return;
+        }
+
+        resultsGrid.ClearSelection();
+        var row = resultsGrid.Rows[hitTest.RowIndex];
+        row.Selected = true;
+        resultsGrid.CurrentCell = row.Cells[Math.Max(hitTest.ColumnIndex, 0)];
+
+        if (row.Tag is ResultRowFilePaths filePaths)
+        {
+            _selectedResultPdfPath = ResolveOpenableResultFilePath(filePaths);
+        }
+        else
+        {
+            _selectedResultPdfPath = null;
+        }
+
+        var hasValidPath = !string.IsNullOrWhiteSpace(_selectedResultPdfPath);
+        copyPdfPathMenuItem.Enabled = hasValidPath;
+        openPdfLocationMenuItem.Enabled = hasValidPath;
+
+        if (!hasValidPath)
+        {
+            AppendLog("No existing PDF file is available for the selected result row.");
+        }
+
+        resultsContextMenu.Show(resultsGrid, e.Location);
+    }
+
+    private void copyPdfPathMenuItem_Click(object? sender, EventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_selectedResultPdfPath))
+        {
+            AppendLog("Could not copy PDF path because no existing PDF file is available for the selected result row.");
+            return;
+        }
+
+        Clipboard.SetText(_selectedResultPdfPath);
+        AppendLog($"Copied PDF path to clipboard: {_selectedResultPdfPath}");
+    }
+
+    private void openPdfLocationMenuItem_Click(object? sender, EventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_selectedResultPdfPath))
+        {
+            AppendLog("Could not open PDF location because no existing PDF file is available for the selected result row.");
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{_selectedResultPdfPath}\"")
+            {
+                UseShellExecute = true
+            });
+            AppendLog($"Opened PDF location: {_selectedResultPdfPath}");
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            AppendLog($"Could not open PDF location: {_selectedResultPdfPath}. {exception.Message}");
+            MessageBox.Show(this, $"The PDF location could not be opened.\n\n{exception.Message}", "Open Location Failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     private void AppendLog(string message)

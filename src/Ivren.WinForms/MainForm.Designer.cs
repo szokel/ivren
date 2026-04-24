@@ -22,6 +22,9 @@ partial class MainForm
     private Button processSingleFileButton;
     private CheckBox dryRunCheckBox;
     private DataGridView resultsGrid;
+    private ContextMenuStrip resultsContextMenu;
+    private ToolStripMenuItem copyPdfPathMenuItem;
+    private ToolStripMenuItem openPdfLocationMenuItem;
     private TextBox logTextBox;
     private Label resultsLabel;
     private Label logLabel;
@@ -59,12 +62,16 @@ partial class MainForm
         dryRunCheckBox = new CheckBox();
         resultsLabel = new Label();
         resultsGrid = new DataGridView();
+        resultsContextMenu = new ContextMenuStrip(components);
+        copyPdfPathMenuItem = new ToolStripMenuItem();
+        openPdfLocationMenuItem = new ToolStripMenuItem();
         logLabel = new Label();
         logTextBox = new TextBox();
         layoutPanel.SuspendLayout();
         commandPanel.SuspendLayout();
         actionPanel.SuspendLayout();
         ((System.ComponentModel.ISupportInitialize)resultsGrid).BeginInit();
+        resultsContextMenu.SuspendLayout();
         SuspendLayout();
         // 
         // layoutPanel
@@ -322,6 +329,27 @@ partial class MainForm
         resultsGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
         resultsGrid.Size = new Size(1154, 263);
         resultsGrid.TabIndex = 2;
+        resultsGrid.MouseDown += resultsGrid_MouseDown;
+        // 
+        // resultsContextMenu
+        // 
+        resultsContextMenu.Items.AddRange(new ToolStripItem[] { copyPdfPathMenuItem, openPdfLocationMenuItem });
+        resultsContextMenu.Name = "resultsContextMenu";
+        resultsContextMenu.Size = new Size(228, 48);
+        // 
+        // copyPdfPathMenuItem
+        // 
+        copyPdfPathMenuItem.Name = "copyPdfPathMenuItem";
+        copyPdfPathMenuItem.Size = new Size(227, 22);
+        copyPdfPathMenuItem.Text = "Copy PDF full path to clipboard";
+        copyPdfPathMenuItem.Click += copyPdfPathMenuItem_Click;
+        // 
+        // openPdfLocationMenuItem
+        // 
+        openPdfLocationMenuItem.Name = "openPdfLocationMenuItem";
+        openPdfLocationMenuItem.Size = new Size(227, 22);
+        openPdfLocationMenuItem.Text = "Open PDF location in File Explorer";
+        openPdfLocationMenuItem.Click += openPdfLocationMenuItem_Click;
         // 
         // logLabel
         // 
@@ -362,6 +390,7 @@ partial class MainForm
         actionPanel.ResumeLayout(false);
         actionPanel.PerformLayout();
         ((System.ComponentModel.ISupportInitialize)resultsGrid).EndInit();
+        resultsContextMenu.ResumeLayout(false);
         ResumeLayout(false);
     }
 }
