@@ -28,6 +28,7 @@ public partial class MainForm : Form
         ConfigureResultsGrid();
         resultsGrid.CellDoubleClick += resultsGrid_CellDoubleClick;
         folderPathComboBox.TextChanged += (_, _) => UpdateProcessFolderButtonState();
+        WriteStartupDiagnostics();
         InitializeStartupFolders();
         UpdateProcessFolderButtonState();
     }
@@ -424,6 +425,46 @@ public partial class MainForm : Form
         }
 
         logTextBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
+    }
+
+    private void WriteStartupDiagnostics()
+    {
+        AppendLog("Startup diagnostics:");
+        AppendLog($"App base directory: {AppContext.BaseDirectory}");
+        AppendLog($"Executable path: {Application.ExecutablePath}");
+
+        var coreAssembly = typeof(IInvoiceFileProcessor).Assembly;
+        var winFormsAssembly = typeof(MainForm).Assembly;
+        var coreAssemblyPath = coreAssembly.Location;
+        var settingsPath = Path.Combine(AppContext.BaseDirectory, SettingsFileName);
+        var supplierProfilesPath = Path.Combine(AppContext.BaseDirectory, "Ivren.SupplierProfiles.json");
+        var userStatePath = GetUserStateFilePath();
+
+        AppendFileDiagnostic("Ivren.Core.dll", coreAssemblyPath);
+        AppendLog($"Ivren.Core assembly: {coreAssembly.FullName}");
+        AppendLog($"WinForms assembly: {winFormsAssembly.FullName}");
+        AppendFileDiagnostic("Settings file", settingsPath);
+        AppendFileDiagnostic("Supplier profiles file", supplierProfilesPath);
+        AppendFileDiagnostic("User state file", userStatePath);
+        AppendLog(string.Empty);
+    }
+
+    private void AppendFileDiagnostic(string label, string filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            AppendLog($"{label}: (not resolved)");
+            return;
+        }
+
+        if (!File.Exists(filePath))
+        {
+            AppendLog($"{label}: {filePath} (missing)");
+            return;
+        }
+
+        var lastWriteTime = File.GetLastWriteTime(filePath);
+        AppendLog($"{label}: {filePath} LastWriteTime={lastWriteTime:yyyy-MM-dd HH:mm:ss}");
     }
 
     private void InitializeStartupFolders()
