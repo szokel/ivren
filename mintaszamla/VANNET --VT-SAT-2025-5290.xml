@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<szamla xmlns="http://www.apeh.hu/2005/szamla" xmlns:xsi="http://www.w3.org/2001/XMLSchemainstance">
+  <fejlec>
+    <elado>
+      <nev>VANNET Telekommunikációs Kft.</nev>
+      <adoszam>22704850-2-43</adoszam>
+      <cim>
+        <orszag>Magyarország</orszag>
+        <telepules>Pécs</telepules>
+        <irszam>7630</irszam>
+        <kozternev>Üszögi kiserdő u. 1/c.</kozternev>
+      </cim>
+    </elado>
+    <vevo>
+      <nev>Mega-Logistic Zrt.</nev>
+      <adoszam>13117429-2-44</adoszam>
+      <cim>
+        <orszag>Magyarország</orszag>
+        <telepules>Kaposvár</telepules>
+        <irszam>7401</irszam>
+        <kozternev>- postafiók 258.</kozternev>
+      </cim>
+    </vevo>
+    <szamlainfo>
+      <sorszam>VT-SAT-2025-5290</sorszam>
+      <kialldatum>2025.09.21</kialldatum>
+      <teljdatum>2025.10.05</teljdatum>
+      <fizhatarido>2025.10.05</fizhatarido>
+      <fizmod>Átutalás</fizmod>
+      <szamlatipusa>Számla</szamlatipusa>
+      <penznem>HUF</penznem>
+      <hivatkozottszamla></hivatkozottszamla>
+      <egyebadat>Szerződésszám: BBB-SZ-20200706-01874&#13;
+Közvetített szolgáltatás</egyebadat>
+    </szamlainfo>
+  </fejlec>
+  <tetelek>
+    <tetel id="1">
+      <termeknev>Szélessávú műholdas internet szolgáltatás TEÁOR 6110</termeknev>
+      <nettoar>19884</nettoar>
+      <afakulcs>5</afakulcs>
+      <afaertek>994</afaertek>
+      <bruttoar>20878</bruttoar>
+      <mennyisegegyseg>db</mennyisegegyseg>
+      <mennyiseg>1</mennyiseg>
+    </tetel>
+  </tetelek>
+  <osszesites>
+    <afarovat id="1">
+      <afakulcs>5</afakulcs>
+      <nettoar>19884</nettoar>
+      <afaertek>994</afaertek>
+      <bruttoar>20878</bruttoar>
+    </afarovat>
+    <vegosszeg>
+      <nettoarossz>19884</nettoarossz>
+      <afaertekossz>994</afaertekossz>
+      <bruttoarossz>20878</bruttoarossz>
+    </vegosszeg>
+  </osszesites>
+</szamla>

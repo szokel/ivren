@@ -12,4 +12,7 @@ public sealed record InvoiceAuditLogEntry(
     string Message,
     string? Error,
     bool IsEncrypted = false,
-    ProcessingFailureReason FailureReason = ProcessingFailureReason.None);
+    ProcessingFailureReason FailureReason = ProcessingFailureReason.None,
+    double ConfidenceScore = 0.0,
+    ConfidenceLevel ConfidenceLevel = ConfidenceLevel.Low,
+    bool IsUncertain = true);

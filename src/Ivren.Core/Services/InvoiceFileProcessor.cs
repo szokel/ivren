@@ -1,3 +1,4 @@
+using System.Globalization;
 using Ivren.Core.Contracts;
 using Ivren.Core.Models;
 
@@ -57,6 +58,7 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
             if (analysisResult.IsEncrypted)
             {
                 var failedTargetPath = BuildFailedTargetFilePath(filePath, options);
+                messages.Add("Detection confidence: 0.00 (Low), uncertain: Yes.");
 
                 if (options.DryRun)
                 {
@@ -114,6 +116,11 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                     supplierProfileSelection.Profile.ToDetectionOptions());
                 messages.Add(detectionResult.Message);
             }
+
+            messages.Add(BuildConfidenceMessage(
+                detectionResult.ConfidenceScore,
+                detectionResult.ConfidenceLevel,
+                detectionResult.IsUncertain));
 
             if (!detectionResult.Success || string.IsNullOrWhiteSpace(detectionResult.InvoiceNumber))
             {
@@ -210,7 +217,10 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                     true,
                     true,
                     false,
-                    messages));
+                    messages,
+                    ConfidenceScore: detectionResult.ConfidenceScore,
+                    ConfidenceLevel: detectionResult.ConfidenceLevel,
+                    IsUncertain: detectionResult.IsUncertain));
             }
 
             var renameResult = RenameSuccessfulFile(filePath, sanitizedFileName, options);
@@ -230,7 +240,10 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                     options.DryRun,
                     false,
                     failedMoveResult.Renamed,
-                    messages));
+                    messages,
+                    ConfidenceScore: detectionResult.ConfidenceScore,
+                    ConfidenceLevel: detectionResult.ConfidenceLevel,
+                    IsUncertain: detectionResult.IsUncertain));
             }
 
             return Complete(new InvoiceFileProcessingResult(
@@ -243,7 +256,10 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                 options.DryRun,
                 false,
                 renameResult.Renamed,
-                messages));
+                messages,
+                ConfidenceScore: detectionResult.ConfidenceScore,
+                ConfidenceLevel: detectionResult.ConfidenceLevel,
+                IsUncertain: detectionResult.IsUncertain));
         }
         catch (Exception exception)
         {
@@ -358,7 +374,10 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
             BuildAuditMessage(result),
             error,
             result.IsEncrypted,
-            result.FailureReason);
+            result.FailureReason,
+            result.ConfidenceScore,
+            result.ConfidenceLevel,
+            result.IsUncertain);
 
         var auditResult = _auditLogService.Write(options.AuditLogFolderPath, entry);
         messages.Add(auditResult.Message);
@@ -372,4 +391,12 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
         => result.FailureReason == ProcessingFailureReason.PasswordProtected
             ? "Password-protected PDF"
             : result.Summary;
+
+    private static string BuildConfidenceMessage(
+        double confidenceScore,
+        ConfidenceLevel confidenceLevel,
+        bool isUncertain)
+        => string.Create(
+            CultureInfo.InvariantCulture,
+            $"Detection confidence: {confidenceScore:0.00} ({confidenceLevel}), uncertain: {(isUncertain ? "Yes" : "No")}.");
 }

@@ -124,7 +124,9 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                     return InvoiceNumberDetectionResult.Found(
                         invoiceNumber,
                         DetectionSource.Xml,
-                        $"Invoice number detected from XML element '{match.Name.LocalName}' in {document.SourceName}.");
+                        $"Invoice number detected from XML element '{match.Name.LocalName}' in {document.SourceName}.",
+                        0.99,
+                        ConfidenceLevel.High);
                 }
             }
 
@@ -146,7 +148,9 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                     return InvoiceNumberDetectionResult.Found(
                         invoiceNumber,
                         DetectionSource.Xml,
-                        $"Invoice number detected from XML attribute '{match.Name.LocalName}' in {document.SourceName}.");
+                        $"Invoice number detected from XML attribute '{match.Name.LocalName}' in {document.SourceName}.",
+                        0.98,
+                        ConfidenceLevel.High);
                 }
             }
 
@@ -156,7 +160,9 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                 return InvoiceNumberDetectionResult.Found(
                     xmlFallbackCandidate,
                     DetectionSource.Xml,
-                    $"Invoice number candidate detected from XML content fallback in {document.SourceName}.");
+                    $"Invoice number candidate detected from XML content fallback in {document.SourceName}.",
+                    0.95,
+                    ConfidenceLevel.High);
             }
         }
 
@@ -192,7 +198,9 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                 return InvoiceNumberDetectionResult.Found(
                     inlineCandidate,
                     DetectionSource.Text,
-                    "Invoice number detected from labeled PDF text.");
+                    "Invoice number detected from labeled PDF text.",
+                    0.88,
+                    ConfidenceLevel.High);
             }
 
             if (TryReadCandidateFromBilingualInvoiceTable(textExtractionResult.Tokens, index, options, out var tableCandidate))
@@ -200,7 +208,9 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                 return InvoiceNumberDetectionResult.Found(
                     tableCandidate,
                     DetectionSource.Text,
-                    "Invoice number detected from a bilingual invoice-number table header.");
+                    "Invoice number detected from a bilingual invoice-number table header.",
+                    0.90,
+                    ConfidenceLevel.High);
             }
 
             if (TryReadCandidateAfterStandaloneInvoiceHeading(textExtractionResult.Tokens, index, options, out var standaloneHeadingCandidate))
@@ -208,7 +218,9 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                 return InvoiceNumberDetectionResult.Found(
                     standaloneHeadingCandidate,
                     DetectionSource.Text,
-                    "Invoice number detected from text after a standalone invoice heading.");
+                    "Invoice number detected from text after a standalone invoice heading.",
+                    0.76,
+                    ConfidenceLevel.Medium);
             }
 
             if (!LooksLikeFocusedInvoiceLabel(normalized))
@@ -223,7 +235,9 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                     return InvoiceNumberDetectionResult.Found(
                         candidate,
                         DetectionSource.Text,
-                        "Invoice number detected from text near an invoice label.");
+                        "Invoice number detected from text near an invoice label.",
+                        IsStrongExplicitInvoiceLabel(normalized) ? 0.85 : 0.72,
+                        IsStrongExplicitInvoiceLabel(normalized) ? ConfidenceLevel.High : ConfidenceLevel.Medium);
                 }
             }
 
@@ -232,7 +246,9 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                 return InvoiceNumberDetectionResult.Found(
                     adjacentCandidate,
                     DetectionSource.Text,
-                    "Invoice number detected from adjacent text fragments near an invoice label.");
+                    "Invoice number detected from adjacent text fragments near an invoice label.",
+                    IsStrongExplicitInvoiceLabel(normalized) ? 0.82 : 0.70,
+                    IsStrongExplicitInvoiceLabel(normalized) ? ConfidenceLevel.High : ConfidenceLevel.Medium);
             }
         }
 
@@ -250,7 +266,9 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                 return InvoiceNumberDetectionResult.Found(
                     fallbackCandidate,
                     DetectionSource.Text,
-                    "Invoice number detected from label-linked extracted PDF text using fallback pattern matching.");
+                    "Invoice number detected from label-linked extracted PDF text using fallback pattern matching.",
+                    0.60,
+                    ConfidenceLevel.Low);
             }
         }
 
@@ -507,6 +525,12 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
 
     private static bool IsHungarianInvoiceNumberLabel(string normalizedToken)
         => normalizedToken is "szamlaszam" or "szamla szama" or "szamla sorszama" or "sorszam";
+
+    private static bool IsStrongExplicitInvoiceLabel(string normalizedToken)
+        => normalizedToken.Contains("invoice number", StringComparison.Ordinal)
+            || normalizedToken.Contains("invoice no", StringComparison.Ordinal)
+            || normalizedToken.Contains("szamla szama", StringComparison.Ordinal)
+            || normalizedToken.Contains("szamlaszam", StringComparison.Ordinal);
 
     private static string NormalizeHeaderLabel(string value)
         => NormalizeForComparison(value).Trim('.', ',', ';', ':');

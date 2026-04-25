@@ -72,6 +72,27 @@ public partial class MainForm : Form
 
         resultsGrid.Columns.Add(new DataGridViewTextBoxColumn
         {
+            Name = "Confidence",
+            HeaderText = "Confidence",
+            Width = 90
+        });
+
+        resultsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "ConfidenceLevel",
+            HeaderText = "Confidence Level",
+            Width = 115
+        });
+
+        resultsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Uncertain",
+            HeaderText = "Uncertain",
+            Width = 80
+        });
+
+        resultsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
             Name = "TargetFileName",
             HeaderText = "Target Path",
             AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
@@ -240,6 +261,9 @@ public partial class MainForm : Form
             result.FailureReason == ProcessingFailureReason.None ? string.Empty : result.FailureReason.ToString(),
             result.DetectionSource.ToString(),
             result.InvoiceNumber ?? string.Empty,
+            result.ConfidenceScore.ToString("0.00"),
+            result.ConfidenceLevel.ToString(),
+            result.IsUncertain ? "Yes" : "No",
             targetPath,
             renameAction,
             result.Summary);
@@ -247,6 +271,22 @@ public partial class MainForm : Form
         resultsGrid.Rows[rowIndex].Tag = new ResultRowFilePaths(
             result.SourceFilePath,
             result.TargetFilePath);
+
+        ApplyConfidenceRowStyle(resultsGrid.Rows[rowIndex], result);
+    }
+
+    private static void ApplyConfidenceRowStyle(DataGridViewRow row, InvoiceFileProcessingResult result)
+    {
+        if (result.ConfidenceLevel == ConfidenceLevel.Low || result.IsUncertain)
+        {
+            row.DefaultCellStyle.BackColor = Color.MistyRose;
+            return;
+        }
+
+        if (result.ConfidenceLevel == ConfidenceLevel.Medium)
+        {
+            row.DefaultCellStyle.BackColor = Color.LemonChiffon;
+        }
     }
 
     private void resultsGrid_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
