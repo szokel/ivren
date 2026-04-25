@@ -482,6 +482,12 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                 continue;
             }
 
+            if (IsRejectedDateLikeToken(token, options))
+            {
+                builder.Clear();
+                continue;
+            }
+
             if (!IsInvoiceCodeTokenPart(token))
             {
                 if (builder.Length > 0)
