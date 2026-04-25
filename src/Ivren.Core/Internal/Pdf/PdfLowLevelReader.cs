@@ -91,6 +91,10 @@ internal sealed class PdfLowLevelReader
         @"\[(?<value>.*?)\]\s*TJ",
         RegexOptions.Compiled | RegexOptions.Singleline);
 
+    private static readonly Regex ArrayLiteralTextRegex = new(
+        @"\((?<value>(?:\\.|[^\\)])*)\)",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
     private static readonly Regex BfCharSectionRegex = new(
         @"beginbfchar(?<value>.*?)endbfchar",
         RegexOptions.Compiled | RegexOptions.Singleline);
@@ -583,7 +587,7 @@ internal sealed class PdfLowLevelReader
         string currentFontAlias,
         IReadOnlyDictionary<string, Dictionary<string, string>> fontMaps)
     {
-        foreach (Match literal in LiteralTextOperatorRegex.Matches(arrayValue))
+        foreach (Match literal in ArrayLiteralTextRegex.Matches(arrayValue))
         {
             PdfTextTokenExtractor.AddToken(tokens, PdfTextTokenExtractor.DecodePdfLiteralString(literal.Groups["value"].Value));
         }

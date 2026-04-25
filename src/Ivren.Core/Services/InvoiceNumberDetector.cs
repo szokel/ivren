@@ -614,7 +614,24 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
 
         for (var offset = 0; offset < maxTokenCount && startIndex + offset < tokens.Count; offset++)
         {
-            builder.Append(tokens[startIndex + offset]);
+            var token = tokens[startIndex + offset];
+            if (IsRejectedDateLikeToken(token, options))
+            {
+                builder.Clear();
+                continue;
+            }
+
+            if (!IsInvoiceCodeTokenPart(token))
+            {
+                if (builder.Length > 0)
+                {
+                    break;
+                }
+
+                continue;
+            }
+
+            builder.Append(token);
 
             if (!TryReadCandidateValue(builder.ToString(), options, out invoiceNumber))
             {
@@ -721,6 +738,10 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         return candidate.Any(char.IsLetter)
             && candidate.Any(character => character is '-' or '/' or '_' or '.');
     }
+
+    private static bool IsRejectedDateLikeToken(string token, InvoiceDetectionOptions options)
+        => options.RejectDateLikeCandidates
+            && DateLikeCandidateRegex.IsMatch(CleanCandidate(token));
 
     private static bool IsInvoiceCodeTokenPart(string token)
         => token.All(character => char.IsLetterOrDigit(character) || character is '-' or '/' or '_' or '.');
