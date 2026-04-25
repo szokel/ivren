@@ -230,6 +230,16 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
 
             for (var offset = 1; offset <= options.NearbyLabelScanWindow && index + offset < textExtractionResult.Tokens.Count; offset++)
             {
+                if (TryReadFragmentedHyphenatedCandidate(textExtractionResult.Tokens, index + offset, options, out var fragmentedCandidate))
+                {
+                    return InvoiceNumberDetectionResult.Found(
+                        fragmentedCandidate,
+                        DetectionSource.Text,
+                        "Invoice number detected from fragmented hyphenated text near an invoice label.",
+                        IsStrongExplicitInvoiceLabel(normalized) ? 0.85 : 0.72,
+                        IsStrongExplicitInvoiceLabel(normalized) ? ConfidenceLevel.High : ConfidenceLevel.Medium);
+                }
+
                 if (TryReadCandidateValue(textExtractionResult.Tokens[index + offset], options, out var candidate))
                 {
                     return InvoiceNumberDetectionResult.Found(
@@ -530,7 +540,9 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         => normalizedToken.Contains("invoice number", StringComparison.Ordinal)
             || normalizedToken.Contains("invoice no", StringComparison.Ordinal)
             || normalizedToken.Contains("szamla szama", StringComparison.Ordinal)
-            || normalizedToken.Contains("szamlaszam", StringComparison.Ordinal);
+            || normalizedToken.Contains("szamla sorszama", StringComparison.Ordinal)
+            || normalizedToken.Contains("szamlaszam", StringComparison.Ordinal)
+            || normalizedToken.Contains("sorszam", StringComparison.Ordinal);
 
     private static string NormalizeHeaderLabel(string value)
         => NormalizeForComparison(value).Trim('.', ',', ';', ':');
@@ -612,6 +624,80 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
 
         invoiceNumber = string.Empty;
         return false;
+    }
+
+    private static bool TryReadFragmentedHyphenatedCandidate(
+        IReadOnlyList<string> tokens,
+        int startIndex,
+        InvoiceDetectionOptions options,
+        out string invoiceNumber)
+    {
+        invoiceNumber = string.Empty;
+        if (startIndex >= tokens.Count || !IsInvoiceCodeTokenPart(tokens[startIndex]))
+        {
+            return false;
+        }
+
+        var firstToken = tokens[startIndex];
+        var builder = new StringBuilder(firstToken);
+        if (!HasValidHyphenatedFragmentStart(firstToken))
+        {
+            return false;
+        }
+
+        var bestCandidate = string.Empty;
+        for (var offset = 1; offset <= 3 && startIndex + offset < tokens.Count; offset++)
+        {
+            var nextToken = tokens[startIndex + offset];
+            if (!ShouldAppendHyphenatedFragment(builder.ToString(), nextToken))
+            {
+                break;
+            }
+
+            builder.Append(nextToken);
+            if (TryReadCandidateValue(builder.ToString(), options, out var candidate)
+                && candidate.Length > firstToken.Length)
+            {
+                bestCandidate = candidate;
+            }
+        }
+
+        invoiceNumber = bestCandidate;
+        return !string.IsNullOrWhiteSpace(invoiceNumber);
+    }
+
+    private static bool ShouldAppendHyphenatedFragment(string currentValue, string nextToken)
+    {
+        if (string.IsNullOrWhiteSpace(nextToken)
+            || nextToken.Length > 8
+            || !nextToken.All(character => char.IsLetterOrDigit(character) || character == '-'))
+        {
+            return false;
+        }
+
+        var trimmedNext = nextToken.TrimEnd('-');
+        if (string.IsNullOrWhiteSpace(trimmedNext))
+        {
+            return false;
+        }
+
+        return currentValue.EndsWith("-", StringComparison.Ordinal)
+            || (currentValue.Contains("-", StringComparison.Ordinal)
+                && nextToken.EndsWith("-", StringComparison.Ordinal)
+                && trimmedNext.All(char.IsDigit));
+    }
+
+    private static bool HasValidHyphenatedFragmentStart(string token)
+    {
+        var hyphenIndex = token.IndexOf('-');
+        if (hyphenIndex < 0)
+        {
+            return false;
+        }
+
+        var prefix = token[..hyphenIndex];
+        return prefix.Any(char.IsLetter)
+            || prefix.Length >= 4;
     }
 
     private static bool IsValidInvoiceNumberCandidate(string? invoiceNumber)
