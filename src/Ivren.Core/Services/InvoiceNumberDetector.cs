@@ -20,6 +20,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         "invoice_no",
         "invoiceno",
         "szamlaszam",
+        "szamla_szam",
         "szamla_sorszam",
         "sorszam",
         "szamlaazonosito"
@@ -32,6 +33,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         "invoiceno",
         "szamlaszam",
         "szlaszam",
+        "szamla_szam",
         "szamla_sorszam",
         "sorszam",
         "szamlaazonosito"
@@ -62,7 +64,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly Regex BankAccountLabelRegex = new(
-        @"\b(?:account\s+(?:no|number)|bankszamla|bankszamlaszam)\b",
+        @"\b(?:account\s+(?:no|number)|bank\s+account|bankszamla(?:szam)?[a-z]*)\b",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private static readonly Regex BankBlockHeadingRegex = new(
