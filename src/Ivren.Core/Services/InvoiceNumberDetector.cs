@@ -98,6 +98,17 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         "tartalma"
     ];
 
+    private static readonly string[] FragmentedInvoiceLabelCompacts =
+    [
+        "szamlaszam",
+        "szamlaszama",
+        "szamlasorszama",
+        "sorszam",
+        "sorszama",
+        "invoicenumber",
+        "invoiceno"
+    ];
+
     public InvoiceNumberDetectionResult DetectFromXml(XmlInvoiceExtractionResult xmlExtractionResult)
     {
         ArgumentNullException.ThrowIfNull(xmlExtractionResult);
@@ -193,6 +204,16 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
             if (IsBankAccountInvoiceLabelContext(textExtractionResult.Tokens, index, normalized))
             {
                 continue;
+            }
+
+            if (TryReadCandidateFromFragmentedInvoiceLabel(textExtractionResult.Tokens, index, options, out var fragmentedLabelCandidate))
+            {
+                return InvoiceNumberDetectionResult.Found(
+                    fragmentedLabelCandidate,
+                    DetectionSource.Text,
+                    "Invoice number detected from fragmented text near a strong invoice label.",
+                    0.85,
+                    ConfidenceLevel.High);
             }
 
             if (TryExtractCandidateFromLabeledToken(token, normalized, options, out var inlineCandidate))
@@ -377,6 +398,172 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         }
 
         return TryReadCandidateValue(tokens[candidateIndex], options, out invoiceNumber);
+    }
+
+    private static bool TryReadCandidateFromFragmentedInvoiceLabel(
+        IReadOnlyList<string> tokens,
+        int labelStartIndex,
+        InvoiceDetectionOptions options,
+        out string invoiceNumber)
+    {
+        invoiceNumber = string.Empty;
+        if (!TryReadFragmentedInvoiceLabel(tokens, labelStartIndex, out var labelEndIndex)
+            || IsBankAccountFragmentedContext(tokens, labelStartIndex, labelEndIndex))
+        {
+            return false;
+        }
+
+        return TryReadCandidateValueFromFragmentedTokens(tokens, labelEndIndex + 1, 20, options, out invoiceNumber);
+    }
+
+    private static bool TryReadFragmentedInvoiceLabel(
+        IReadOnlyList<string> tokens,
+        int startIndex,
+        out int labelEndIndex)
+    {
+        const int maxLabelTokens = 16;
+        var builder = new StringBuilder();
+        labelEndIndex = -1;
+
+        for (var offset = 0; offset < maxLabelTokens && startIndex + offset < tokens.Count; offset++)
+        {
+            var tokenIndex = startIndex + offset;
+            var compact = NormalizeCompact(tokens[tokenIndex]);
+            if (string.IsNullOrWhiteSpace(compact))
+            {
+                if (builder.Length > 0)
+                {
+                    labelEndIndex = tokenIndex;
+                }
+
+                continue;
+            }
+
+            builder.Append(compact);
+            var labelCandidate = builder.ToString();
+            if (!FragmentedInvoiceLabelCompacts.Any(label => label.StartsWith(labelCandidate, StringComparison.Ordinal)))
+            {
+                return false;
+            }
+
+            if (!FragmentedInvoiceLabelCompacts.Contains(labelCandidate, StringComparer.Ordinal))
+            {
+                labelEndIndex = tokenIndex;
+                continue;
+            }
+
+            if (NextCompactTokenLooksLikeLabelSuffix(tokens, tokenIndex + 1))
+            {
+                return false;
+            }
+
+            labelEndIndex = ConsumeFollowingSeparators(tokens, tokenIndex + 1, tokenIndex);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryReadCandidateValueFromFragmentedTokens(
+        IReadOnlyList<string> tokens,
+        int startIndex,
+        int maxTokenCount,
+        InvoiceDetectionOptions options,
+        out string invoiceNumber)
+    {
+        var builder = new StringBuilder();
+        var bestCandidate = string.Empty;
+
+        for (var offset = 0; offset < maxTokenCount && startIndex + offset < tokens.Count; offset++)
+        {
+            var token = tokens[startIndex + offset].Trim();
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                continue;
+            }
+
+            if (!IsInvoiceCodeTokenPart(token))
+            {
+                if (builder.Length > 0)
+                {
+                    break;
+                }
+
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(bestCandidate) && token.All(char.IsLetter))
+            {
+                break;
+            }
+
+            builder.Append(token);
+            if (TryReadCandidateValue(builder.ToString(), options, out var candidate))
+            {
+                bestCandidate = candidate;
+            }
+        }
+
+        invoiceNumber = bestCandidate;
+        return !string.IsNullOrWhiteSpace(invoiceNumber);
+    }
+
+    private static bool IsBankAccountFragmentedContext(
+        IReadOnlyList<string> tokens,
+        int startIndex,
+        int endIndex)
+    {
+        var contextStart = Math.Max(0, startIndex - 8);
+        var contextEnd = Math.Min(tokens.Count - 1, endIndex + 8);
+        var normalizedContext = string.Join(
+            ' ',
+            Enumerable.Range(contextStart, contextEnd - contextStart + 1)
+                .Select(index => NormalizeForComparison(tokens[index])));
+        var compactContext = string.Concat(
+            Enumerable.Range(contextStart, contextEnd - contextStart + 1)
+                .Select(index => NormalizeCompact(tokens[index])));
+
+        return BankAccountLabelRegex.IsMatch(normalizedContext)
+            || BankBlockHeadingRegex.IsMatch(normalizedContext)
+            || BankCredentialRegex.IsMatch(normalizedContext)
+            || compactContext.Contains("bankszamla", StringComparison.Ordinal)
+            || compactContext.Contains("bankaccount", StringComparison.Ordinal)
+            || compactContext.Contains("accountnumber", StringComparison.Ordinal)
+            || compactContext.Contains("iban", StringComparison.Ordinal)
+            || compactContext.Contains("swift", StringComparison.Ordinal)
+            || compactContext.Contains("bic", StringComparison.Ordinal);
+    }
+
+    private static bool NextCompactTokenLooksLikeLabelSuffix(IReadOnlyList<string> tokens, int startIndex)
+    {
+        for (var index = startIndex; index < Math.Min(tokens.Count, startIndex + 3); index++)
+        {
+            var compact = NormalizeCompact(tokens[index]);
+            if (string.IsNullOrWhiteSpace(compact))
+            {
+                continue;
+            }
+
+            return compact.All(char.IsLetter);
+        }
+
+        return false;
+    }
+
+    private static int ConsumeFollowingSeparators(IReadOnlyList<string> tokens, int startIndex, int fallbackIndex)
+    {
+        var result = fallbackIndex;
+        for (var index = startIndex; index < tokens.Count; index++)
+        {
+            if (!string.IsNullOrWhiteSpace(NormalizeCompact(tokens[index])))
+            {
+                break;
+            }
+
+            result = index;
+        }
+
+        return result;
     }
 
     private static bool LooksLikeBilingualInvoiceNumberHeader(
@@ -789,6 +976,9 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
 
     private static string CleanCandidate(string value)
         => value.Trim().Trim(':', ';', ',', '.', '-', '_', '/', '\\');
+
+    private static string NormalizeCompact(string value)
+        => Regex.Replace(NormalizeForComparison(value), @"[^a-z0-9]", string.Empty);
 
     private static string NormalizeForComparison(string value)
     {
