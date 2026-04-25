@@ -55,12 +55,16 @@ internal sealed class PdfLowLevelReader
         @"/Font\s*<<(?<value>.*?)>>",
         RegexOptions.Compiled | RegexOptions.Singleline);
 
+    private static readonly Regex FontResourceReferenceRegex = new(
+        @"/Font\s+(?<object>\d+)\s+(?<generation>\d+)\s+R",
+        RegexOptions.Compiled);
+
     private static readonly Regex XObjectResourceRegex = new(
         @"/XObject\s*<<(?<value>.*?)>>",
         RegexOptions.Compiled | RegexOptions.Singleline);
 
     private static readonly Regex FontAliasReferenceRegex = new(
-        @"/(?<alias>F\d+)\s+(?<object>\d+)\s+(?<generation>\d+)\s+R",
+        @"/(?<alias>[A-Za-z][A-Za-z0-9_.-]*)\s+(?<object>\d+)\s+(?<generation>\d+)\s+R",
         RegexOptions.Compiled);
 
     private static readonly Regex XObjectAliasReferenceRegex = new(
@@ -72,7 +76,7 @@ internal sealed class PdfLowLevelReader
         RegexOptions.Compiled);
 
     private static readonly Regex FontSelectionRegex = new(
-        @"/(?<alias>F\d+)\s+[-+]?\d*\.?\d+\s+Tf",
+        @"/(?<alias>[A-Za-z][A-Za-z0-9_.-]*)\s+[-+]?\d*\.?\d+\s+Tf",
         RegexOptions.Compiled | RegexOptions.Singleline);
 
     private static readonly Regex XObjectDrawRegex = new(
@@ -366,45 +370,61 @@ internal sealed class PdfLowLevelReader
         var result = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
         foreach (var resourceBody in ReadResourceBodies(resourceOwnerBody, objects))
         {
-            var fontDictionaryMatch = FontResourceRegex.Match(resourceBody);
-            if (!fontDictionaryMatch.Success)
+            foreach (var fontDictionaryBody in ReadFontDictionaryBodies(resourceBody, objects))
             {
-                continue;
-            }
-
-            foreach (Match match in FontAliasReferenceRegex.Matches(fontDictionaryMatch.Groups["value"].Value))
-            {
-                var alias = match.Groups["alias"].Value;
-                var fontObjectNumber = int.Parse(match.Groups["object"].Value, CultureInfo.InvariantCulture);
-                if (!objects.TryGetValue(fontObjectNumber, out var fontObject))
+                foreach (Match match in FontAliasReferenceRegex.Matches(fontDictionaryBody))
                 {
-                    continue;
-                }
+                    var alias = match.Groups["alias"].Value;
+                    var fontObjectNumber = int.Parse(match.Groups["object"].Value, CultureInfo.InvariantCulture);
+                    if (!objects.TryGetValue(fontObjectNumber, out var fontObject))
+                    {
+                        continue;
+                    }
 
-                var toUnicodeMatch = ToUnicodeReferenceRegex.Match(fontObject.Body);
-                if (!toUnicodeMatch.Success)
-                {
-                    continue;
-                }
+                    var toUnicodeMatch = ToUnicodeReferenceRegex.Match(fontObject.Body);
+                    if (!toUnicodeMatch.Success)
+                    {
+                        continue;
+                    }
 
-                var toUnicodeObjectNumber = int.Parse(toUnicodeMatch.Groups["object"].Value, CultureInfo.InvariantCulture);
-                if (!objects.TryGetValue(toUnicodeObjectNumber, out var toUnicodeObject))
-                {
-                    continue;
-                }
+                    var toUnicodeObjectNumber = int.Parse(toUnicodeMatch.Groups["object"].Value, CultureInfo.InvariantCulture);
+                    if (!objects.TryGetValue(toUnicodeObjectNumber, out var toUnicodeObject))
+                    {
+                        continue;
+                    }
 
-                var stream = TryReadStream(toUnicodeObject, objects);
-                if (stream is null)
-                {
-                    continue;
-                }
+                    var stream = TryReadStream(toUnicodeObject, objects);
+                    if (stream is null)
+                    {
+                        continue;
+                    }
 
-                var cmapText = Encoding.Latin1.GetString(stream.Value.DecodedBytes);
-                result[alias] = ParseToUnicodeMap(cmapText);
+                    var cmapText = Encoding.Latin1.GetString(stream.Value.DecodedBytes);
+                    result[alias] = ParseToUnicodeMap(cmapText);
+                }
             }
         }
 
         return result;
+    }
+
+    private static IEnumerable<string> ReadFontDictionaryBodies(
+        string resourceBody,
+        IReadOnlyDictionary<int, PdfObjectData> objects)
+    {
+        foreach (Match match in FontResourceRegex.Matches(resourceBody))
+        {
+            yield return match.Groups["value"].Value;
+        }
+
+        foreach (Match match in FontResourceReferenceRegex.Matches(resourceBody))
+        {
+            var objectNumber = int.Parse(match.Groups["object"].Value, CultureInfo.InvariantCulture);
+            if (objects.TryGetValue(objectNumber, out var fontDictionaryObject))
+            {
+                yield return fontDictionaryObject.Body;
+            }
+        }
     }
 
     private static IReadOnlyDictionary<string, int> ReadXObjectReferences(
@@ -549,7 +569,7 @@ internal sealed class PdfLowLevelReader
         var currentFontAlias = string.Empty;
 
         var operationRegex = new Regex(
-            @"/(?<fontAlias>F\d+)\s+[-+]?\d*\.?\d+\s+Tf|\((?<literal>(?:\\.|[^\\)])*)\)\s*(?<literalOperator>Tj|'|"")|<(?<hex>[0-9A-Fa-f]+)>\s*Tj|\[(?<array>.*?)\]\s*TJ",
+            @"/(?<fontAlias>[A-Za-z][A-Za-z0-9_.-]*)\s+[-+]?\d*\.?\d+\s+Tf|\((?<literal>(?:\\.|[^\\)])*)\)\s*(?<literalOperator>Tj|'|"")|<(?<hex>[0-9A-Fa-f]+)>\s*Tj|\[(?<array>.*?)\]\s*TJ",
             RegexOptions.Compiled | RegexOptions.Singleline);
 
         foreach (Match match in operationRegex.Matches(decodedStream))
@@ -562,7 +582,7 @@ internal sealed class PdfLowLevelReader
 
             if (match.Groups["literal"].Success)
             {
-                PdfTextTokenExtractor.AddToken(tokens, PdfTextTokenExtractor.DecodePdfLiteralString(match.Groups["literal"].Value));
+                PdfTextTokenExtractor.AddToken(tokens, DecodeLiteralText(match.Groups["literal"].Value, currentFontAlias, fontMaps));
                 continue;
             }
 
@@ -589,7 +609,7 @@ internal sealed class PdfLowLevelReader
     {
         foreach (Match literal in ArrayLiteralTextRegex.Matches(arrayValue))
         {
-            PdfTextTokenExtractor.AddToken(tokens, PdfTextTokenExtractor.DecodePdfLiteralString(literal.Groups["value"].Value));
+            PdfTextTokenExtractor.AddToken(tokens, DecodeLiteralText(literal.Groups["value"].Value, currentFontAlias, fontMaps));
         }
 
         foreach (Match hex in Regex.Matches(arrayValue, @"<(?<value>[0-9A-Fa-f]+)>"))
@@ -609,6 +629,26 @@ internal sealed class PdfLowLevelReader
         }
 
         return PdfTextTokenExtractor.DecodePdfHexString(hexValue);
+    }
+
+    private static string DecodeLiteralText(
+        string literalValue,
+        string currentFontAlias,
+        IReadOnlyDictionary<string, Dictionary<string, string>> fontMaps)
+    {
+        var decodedLiteral = PdfTextTokenExtractor.DecodePdfLiteralString(literalValue);
+        if (!fontMaps.TryGetValue(currentFontAlias, out var unicodeMap) || unicodeMap.Count == 0)
+        {
+            return decodedLiteral;
+        }
+
+        var hexBuilder = new StringBuilder(decodedLiteral.Length * 2);
+        foreach (var character in decodedLiteral)
+        {
+            hexBuilder.Append(((int)character & 0xFF).ToString("X2", CultureInfo.InvariantCulture));
+        }
+
+        return DecodeWithUnicodeMap(hexBuilder.ToString(), unicodeMap);
     }
 
     private static Dictionary<string, string> ParseToUnicodeMap(string cmapText)
