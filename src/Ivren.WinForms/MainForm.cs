@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Ivren.Core.Contracts;
 using Ivren.Core.Models;
+using Ivren.Core.Services;
 
 namespace Ivren.WinForms;
 
@@ -446,6 +447,7 @@ public partial class MainForm : Form
         AppendFileDiagnostic("Settings file", settingsPath);
         AppendFileDiagnostic("Supplier profiles file", supplierProfilesPath);
         AppendFileDiagnostic("User state file", userStatePath);
+        AppendLog($"XML encoding support: {string.Join("; ", XmlInvoiceDataExtractor.GetXmlEncodingSupportDiagnostics())}");
         AppendLog(string.Empty);
     }
 

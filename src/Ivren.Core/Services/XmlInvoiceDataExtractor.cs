@@ -8,6 +8,24 @@ namespace Ivren.Core.Services;
 
 public sealed class XmlInvoiceDataExtractor : IXmlInvoiceDataExtractor
 {
+    private static readonly string[] XmlEncodingDiagnostics =
+    [
+        "utf-8",
+        "utf-16",
+        "iso-8859-2",
+        "windows-1250"
+    ];
+
+    static XmlInvoiceDataExtractor()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+    }
+
+    public static IReadOnlyList<string> GetXmlEncodingSupportDiagnostics()
+        => XmlEncodingDiagnostics
+            .Select(static encodingName => $"{encodingName}: {(CanParseDiagnosticXml(encodingName) ? "supported" : "not supported")}")
+            .ToArray();
+
     public XmlInvoiceExtractionResult Extract(PdfAnalysisResult analysisResult)
     {
         ArgumentNullException.ThrowIfNull(analysisResult);
@@ -19,24 +37,26 @@ public sealed class XmlInvoiceDataExtractor : IXmlInvoiceDataExtractor
         {
             if (!LooksLikeXml(embeddedFile))
             {
+                messages.Add($"Embedded file is not an XML candidate: {embeddedFile.FileName}");
                 continue;
             }
 
-            if (!TryLoadXmlContent(embeddedFile.Content, out var content))
+            messages.Add($"Embedded file is an XML candidate: {embeddedFile.FileName}");
+            if (!TryLoadXmlDocument(embeddedFile.Content, out var document, out var parseError))
             {
+                messages.Add($"XML parsing failed for {embeddedFile.FileName}: {parseError}");
                 continue;
             }
 
-            try
-            {
-                _ = XDocument.Parse(content, LoadOptions.None);
-                documents.Add(new XmlInvoiceDocument(embeddedFile.FileName, content));
-                messages.Add($"Usable embedded XML found: {embeddedFile.FileName}");
-            }
-            catch
-            {
-                messages.Add($"Embedded file looked like XML but could not be parsed: {embeddedFile.FileName}");
-            }
+            var rootName = document.Root?.Name.LocalName ?? "(none)";
+            var hasSzamlaSzam = document.Descendants()
+                .Any(static element => string.Equals(element.Name.LocalName, "SZAMLA_SZAM", StringComparison.OrdinalIgnoreCase));
+
+            documents.Add(new XmlInvoiceDocument(embeddedFile.FileName, document.ToString(SaveOptions.DisableFormatting)));
+            messages.Add($"XML parsing succeeded for {embeddedFile.FileName}.");
+            messages.Add($"XML root element for {embeddedFile.FileName}: {rootName}");
+            messages.Add($"XML contains SZAMLA_SZAM for {embeddedFile.FileName}: {(hasSzamlaSzam ? "Yes" : "No")}");
+            messages.Add($"Usable embedded XML found: {embeddedFile.FileName}");
         }
 
         if (documents.Count == 0)
@@ -63,7 +83,7 @@ public sealed class XmlInvoiceDataExtractor : IXmlInvoiceDataExtractor
         return preview.StartsWith("<", StringComparison.Ordinal);
     }
 
-    private static bool TryLoadXmlContent(byte[] contentBytes, out string content)
+    private static bool TryLoadXmlDocument(byte[] contentBytes, out XDocument document, out string error)
     {
         try
         {
@@ -77,13 +97,33 @@ public sealed class XmlInvoiceDataExtractor : IXmlInvoiceDataExtractor
                     CloseInput = false
                 });
 
-            var document = XDocument.Load(xmlReader, LoadOptions.None);
-            content = document.ToString(SaveOptions.DisableFormatting);
-            return !string.IsNullOrWhiteSpace(content);
+            document = XDocument.Load(xmlReader, LoadOptions.None);
+            error = string.Empty;
+            return document.Root is not null;
+        }
+        catch (Exception exception) when (exception is XmlException
+            or DecoderFallbackException
+            or IOException
+            or InvalidOperationException)
+        {
+            document = null!;
+            error = exception.Message;
+            return false;
+        }
+    }
+
+    private static bool CanParseDiagnosticXml(string encodingName)
+    {
+        try
+        {
+            var encoding = Encoding.GetEncoding(encodingName);
+            var xml = $"<?xml version=\"1.0\" encoding=\"{encodingName}\"?><SZAMLA><SZAMLA_SZAM>83502860670</SZAMLA_SZAM><ARVIZTURO>Árvíztűrő tükörfúrógép</ARVIZTURO></SZAMLA>";
+            return TryLoadXmlDocument(encoding.GetBytes(xml), out var document, out _)
+                && string.Equals(document.Root?.Name.LocalName, "SZAMLA", StringComparison.Ordinal)
+                && document.Descendants("SZAMLA_SZAM").Any(static element => element.Value == "83502860670");
         }
         catch
         {
-            content = string.Empty;
             return false;
         }
     }

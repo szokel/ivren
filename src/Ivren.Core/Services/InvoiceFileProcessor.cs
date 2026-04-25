@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using Ivren.Core.Contracts;
 using Ivren.Core.Models;
 
@@ -55,6 +56,7 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
 
             var analysisResult = _pdfAnalysisService.Analyze(filePath);
             messages.AddRange(analysisResult.Messages);
+            AddEmbeddedFileDiagnostics(analysisResult, messages);
             if (analysisResult.IsEncrypted)
             {
                 var failedTargetPath = BuildFailedTargetFilePath(filePath, options);
@@ -102,9 +104,18 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
 
             var detectionResult = _invoiceNumberDetector.DetectFromXml(xmlResult);
             messages.Add(detectionResult.Message);
+            messages.Add(BuildXmlDetectionResultMessage(detectionResult));
+            var xmlPathSucceeded = detectionResult.Success
+                && detectionResult.Source == DetectionSource.Xml
+                && !string.IsNullOrWhiteSpace(detectionResult.InvoiceNumber);
 
-            if (!detectionResult.Success)
+            if (xmlPathSucceeded)
             {
+                messages.Add("XML path succeeded, skipping text fallback.");
+            }
+            else
+            {
+                messages.Add($"XML path failed, falling back to text. Reason: {detectionResult.Message}");
                 var textResult = _textExtractionService.Extract(analysisResult);
                 messages.AddRange(textResult.Messages);
 
@@ -115,6 +126,13 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
                     textResult,
                     supplierProfileSelection.Profile.ToDetectionOptions());
                 messages.Add(detectionResult.Message);
+            }
+
+            if (xmlPathSucceeded && detectionResult.Source != DetectionSource.Xml)
+            {
+                const string consistencyError = "BUG: XML succeeded but final detection source was overwritten.";
+                messages.Add(consistencyError);
+                throw new InvalidOperationException(consistencyError);
             }
 
             messages.Add(BuildConfidenceMessage(
@@ -345,6 +363,66 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
         messages.Add("Failed-file move skipped because dry-run mode is enabled.");
     }
 
+    private static void AddEmbeddedFileDiagnostics(PdfAnalysisResult analysisResult, ICollection<string> messages)
+    {
+        messages.Add($"Embedded file diagnostics: count={analysisResult.EmbeddedFiles.Count}");
+
+        for (var index = 0; index < analysisResult.EmbeddedFiles.Count; index++)
+        {
+            var embeddedFile = analysisResult.EmbeddedFiles[index];
+            messages.Add(
+                $"Embedded file #{index + 1}: filename={embeddedFile.FileName}; byteLength={embeddedFile.Content.Length}; isXmlCandidate={(LooksLikeXmlCandidate(embeddedFile) ? "Yes" : "No")}; preview={BuildEmbeddedFilePreview(embeddedFile.Content)}");
+        }
+    }
+
+    private static bool LooksLikeXmlCandidate(PdfEmbeddedFile embeddedFile)
+    {
+        if (embeddedFile.FileName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (string.Equals(embeddedFile.MediaType, "XML", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var preview = DecodePreviewText(embeddedFile.Content).TrimStart('\0', '\uFEFF', ' ', '\r', '\n', '\t');
+        return preview.StartsWith("<", StringComparison.Ordinal);
+    }
+
+    private static string BuildEmbeddedFilePreview(byte[] contentBytes)
+    {
+        if (contentBytes.Length == 0)
+        {
+            return "(empty)";
+        }
+
+        var preview = DecodePreviewText(contentBytes.Take(80).ToArray());
+        var builder = new StringBuilder(preview.Length);
+        foreach (var character in preview)
+        {
+            builder.Append(char.IsControl(character) ? ' ' : character);
+        }
+
+        return builder.ToString().Trim();
+    }
+
+    private static string DecodePreviewText(byte[] contentBytes)
+    {
+        if (contentBytes.Length >= 2 && contentBytes[0] == 0xFE && contentBytes[1] == 0xFF)
+        {
+            return Encoding.BigEndianUnicode.GetString(contentBytes[2..]);
+        }
+
+        if (contentBytes.Length >= 2 && contentBytes[0] == 0xFF && contentBytes[1] == 0xFE)
+        {
+            return Encoding.Unicode.GetString(contentBytes[2..]);
+        }
+
+        return Encoding.Latin1.GetString(contentBytes);
+    }
+
     private void WriteAuditLogIfNeeded(
         InvoiceFileProcessingOptions options,
         InvoiceFileProcessingResult result,
@@ -391,6 +469,9 @@ public sealed class InvoiceFileProcessor : IInvoiceFileProcessor
         => result.FailureReason == ProcessingFailureReason.PasswordProtected
             ? "Password-protected PDF"
             : result.Summary;
+
+    private static string BuildXmlDetectionResultMessage(InvoiceNumberDetectionResult detectionResult)
+        => $"XML detection result: success={(detectionResult.Success ? "Yes" : "No")}; source={detectionResult.Source}; invoiceNumber={detectionResult.InvoiceNumber ?? "(none)"}; confidence={detectionResult.ConfidenceScore:0.00} {detectionResult.ConfidenceLevel}; message={detectionResult.Message}";
 
     private static string BuildConfidenceMessage(
         double confidenceScore,
