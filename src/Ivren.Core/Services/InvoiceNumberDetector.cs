@@ -236,14 +236,20 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                     ConfidenceLevel.High);
             }
 
-            if (TryReadCandidateAfterStandaloneInvoiceHeading(textExtractionResult.Tokens, index, options, out var standaloneHeadingCandidate))
+            if (TryReadCandidateAfterStandaloneInvoiceHeading(
+                textExtractionResult.Tokens,
+                index,
+                options,
+                out var standaloneHeadingCandidate,
+                out var standaloneHeadingConfidenceScore,
+                out var standaloneHeadingConfidenceLevel))
             {
                 return InvoiceNumberDetectionResult.Found(
                     standaloneHeadingCandidate,
                     DetectionSource.Text,
                     "Invoice number detected from text after a standalone invoice heading.",
-                    0.76,
-                    ConfidenceLevel.Medium);
+                    standaloneHeadingConfidenceScore,
+                    standaloneHeadingConfidenceLevel);
             }
 
             if (!LooksLikeFocusedInvoiceLabel(normalized))
@@ -361,15 +367,48 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         IReadOnlyList<string> tokens,
         int headingStartIndex,
         InvoiceDetectionOptions options,
-        out string invoiceNumber)
+        out string invoiceNumber,
+        out double confidenceScore,
+        out ConfidenceLevel confidenceLevel)
     {
+        confidenceScore = 0.76;
+        confidenceLevel = ConfidenceLevel.Medium;
+
         if (!TryReadStandaloneInvoiceHeading(tokens, headingStartIndex, out var candidateStartIndex))
         {
             invoiceNumber = string.Empty;
             return false;
         }
 
-        return TryReadStandaloneHeadingCandidateFromFollowingTokens(tokens, candidateStartIndex, 40, options, out invoiceNumber);
+        var found = TryReadStandaloneHeadingCandidateFromFollowingTokens(
+            tokens,
+            candidateStartIndex,
+            40,
+            options,
+            out invoiceNumber,
+            out var firstCandidateTokenIndex,
+            out var lastCandidateTokenIndex,
+            out var followedByPageMarker);
+
+        if (!found)
+        {
+            return false;
+        }
+
+        if (IsHighConfidenceStandaloneHeadingDetection(
+            tokens,
+            headingStartIndex,
+            candidateStartIndex,
+            firstCandidateTokenIndex,
+            lastCandidateTokenIndex,
+            followedByPageMarker,
+            invoiceNumber))
+        {
+            confidenceScore = 0.85;
+            confidenceLevel = ConfidenceLevel.High;
+        }
+
+        return true;
     }
 
     private static bool TryReadCandidateFromBilingualInvoiceTable(
@@ -670,16 +709,23 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         int startIndex,
         int maxTokenCount,
         InvoiceDetectionOptions options,
-        out string invoiceNumber)
+        out string invoiceNumber,
+        out int firstCandidateTokenIndex,
+        out int lastCandidateTokenIndex,
+        out bool followedByPageMarker)
     {
         var builder = new StringBuilder();
         var bestCandidate = string.Empty;
+        firstCandidateTokenIndex = -1;
+        lastCandidateTokenIndex = -1;
+        followedByPageMarker = false;
 
         for (var offset = 0; offset < maxTokenCount && startIndex + offset < tokens.Count; offset++)
         {
             var tokenIndex = startIndex + offset;
             if (!string.IsNullOrWhiteSpace(bestCandidate) && LooksLikePageMarker(tokens, tokenIndex))
             {
+                followedByPageMarker = true;
                 invoiceNumber = bestCandidate;
                 return true;
             }
@@ -695,15 +741,56 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                 break;
             }
 
+            if (builder.Length == 0)
+            {
+                firstCandidateTokenIndex = tokenIndex;
+            }
+
             builder.Append(token);
             if (TryReadStandaloneHeadingCandidate(builder.ToString(), options, out var candidate))
             {
                 bestCandidate = candidate;
+                lastCandidateTokenIndex = tokenIndex;
             }
         }
 
         invoiceNumber = bestCandidate;
         return !string.IsNullOrWhiteSpace(invoiceNumber);
+    }
+
+    private static bool IsHighConfidenceStandaloneHeadingDetection(
+        IReadOnlyList<string> tokens,
+        int headingStartIndex,
+        int candidateStartIndex,
+        int firstCandidateTokenIndex,
+        int lastCandidateTokenIndex,
+        bool followedByPageMarker,
+        string invoiceNumber)
+        => IsStrongStandaloneInvoiceHeading(tokens, headingStartIndex)
+            && firstCandidateTokenIndex == candidateStartIndex
+            && lastCandidateTokenIndex >= firstCandidateTokenIndex
+            && followedByPageMarker
+            && StandaloneHeadingInvoiceCandidateRegex.IsMatch(invoiceNumber)
+            && !IsBankAccountFragmentedContext(tokens, headingStartIndex, lastCandidateTokenIndex);
+
+    private static bool IsStrongStandaloneInvoiceHeading(IReadOnlyList<string> tokens, int headingStartIndex)
+    {
+        var builder = new StringBuilder();
+        for (var index = headingStartIndex; index < Math.Min(tokens.Count, headingStartIndex + 8); index++)
+        {
+            builder.Append(NormalizeCompact(tokens[index]));
+            if (builder.ToString() == "szamla")
+            {
+                return true;
+            }
+
+            if (!"szamla".StartsWith(builder.ToString(), StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return false;
     }
 
     private static bool TryReadStandaloneHeadingCandidate(
