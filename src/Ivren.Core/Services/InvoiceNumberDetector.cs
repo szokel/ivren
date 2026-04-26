@@ -907,12 +907,18 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         out string invoiceNumber)
     {
         var builder = new StringBuilder();
+        var bestCandidate = string.Empty;
 
         for (var offset = 0; offset < maxTokenCount && startIndex + offset < tokens.Count; offset++)
         {
             var token = tokens[startIndex + offset];
             if (IsRejectedDateLikeToken(token, options))
             {
+                if (!string.IsNullOrWhiteSpace(bestCandidate))
+                {
+                    break;
+                }
+
                 builder.Clear();
                 continue;
             }
@@ -927,18 +933,23 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                 continue;
             }
 
+            if (!string.IsNullOrWhiteSpace(bestCandidate) && token.All(char.IsLetter))
+            {
+                break;
+            }
+
             builder.Append(token);
 
-            if (!TryReadCandidateValue(builder.ToString(), options, out invoiceNumber))
+            if (!TryReadCandidateValue(builder.ToString(), options, out var candidate))
             {
                 continue;
             }
 
-            return true;
+            bestCandidate = candidate;
         }
 
-        invoiceNumber = string.Empty;
-        return false;
+        invoiceNumber = bestCandidate;
+        return !string.IsNullOrWhiteSpace(invoiceNumber);
     }
 
     private static bool TryReadFragmentedHyphenatedCandidate(
