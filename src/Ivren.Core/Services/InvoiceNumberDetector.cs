@@ -537,6 +537,11 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                 continue;
             }
 
+            if (builder.Length == 0 && token.Length > 2 && token.All(char.IsLetter))
+            {
+                continue;
+            }
+
             if (!string.IsNullOrWhiteSpace(bestCandidate) && token.All(char.IsLetter))
             {
                 break;
@@ -558,7 +563,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         int startIndex,
         int endIndex)
     {
-        var contextStart = Math.Max(0, startIndex - 8);
+        var contextStart = Math.Max(0, startIndex - 3);
         var contextEnd = Math.Min(tokens.Count - 1, endIndex + 8);
         var normalizedContext = string.Join(
             ' ',
@@ -571,12 +576,23 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         return BankAccountLabelRegex.IsMatch(normalizedContext)
             || BankBlockHeadingRegex.IsMatch(normalizedContext)
             || BankCredentialRegex.IsMatch(normalizedContext)
+            || IsImmediatelyPrefixedByBank(tokens, startIndex)
             || compactContext.Contains("bankszamla", StringComparison.Ordinal)
             || compactContext.Contains("bankaccount", StringComparison.Ordinal)
             || compactContext.Contains("accountnumber", StringComparison.Ordinal)
             || compactContext.Contains("iban", StringComparison.Ordinal)
             || compactContext.Contains("swift", StringComparison.Ordinal)
             || compactContext.Contains("bic", StringComparison.Ordinal);
+    }
+
+    private static bool IsImmediatelyPrefixedByBank(IReadOnlyList<string> tokens, int startIndex)
+    {
+        var prefixStart = Math.Max(0, startIndex - 6);
+        var prefix = string.Concat(
+            Enumerable.Range(prefixStart, startIndex - prefixStart)
+                .Select(index => NormalizeCompact(tokens[index])));
+
+        return prefix.EndsWith("bank", StringComparison.Ordinal);
     }
 
     private static bool NextCompactTokenLooksLikeLabelSuffix(IReadOnlyList<string> tokens, int startIndex)
@@ -844,7 +860,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
             return true;
         }
 
-        var startIndex = Math.Max(0, labelIndex - 8);
+        var startIndex = Math.Max(0, labelIndex - 3);
         var endIndex = Math.Min(tokens.Count - 1, labelIndex + 6);
         var context = string.Join(
             ' ',
