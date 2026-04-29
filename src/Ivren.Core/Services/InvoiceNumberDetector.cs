@@ -79,12 +79,15 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
     {
         "referencia szam",
         "reference no",
+        "hivatkozasi szam",
         "szamla kelte",
         "invoice date",
+        "teljesites idopontja",
         "teljesites datuma",
         "performance date",
         "fizetesi hatarido",
         "term of payment",
+        "fizetes modja",
         "fizetesi mod",
         "way of payment"
     };
@@ -233,6 +236,16 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                     DetectionSource.Text,
                     "Invoice number detected from a bilingual invoice-number table header.",
                     0.90,
+                    ConfidenceLevel.High);
+            }
+
+            if (TryReadCandidateFromHungarianInvoiceHeaderTable(textExtractionResult.Tokens, index, options, out var hungarianTableCandidate))
+            {
+                return InvoiceNumberDetectionResult.Found(
+                    hungarianTableCandidate,
+                    DetectionSource.Text,
+                    "Invoice number detected from a Hungarian invoice-number table header.",
+                    0.85,
                     ConfidenceLevel.High);
             }
 
@@ -437,6 +450,29 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         }
 
         return TryReadCandidateValue(tokens[candidateIndex], options, out invoiceNumber);
+    }
+
+    private static bool TryReadCandidateFromHungarianInvoiceHeaderTable(
+        IReadOnlyList<string> tokens,
+        int labelIndex,
+        InvoiceDetectionOptions options,
+        out string invoiceNumber)
+    {
+        invoiceNumber = string.Empty;
+        var normalizedHeader = NormalizeHeaderLabel(tokens[labelIndex]);
+        if (!IsHungarianInvoiceNumberLabel(normalizedHeader)
+            || IsBankAccountInvoiceLabelContext(tokens, labelIndex, NormalizeForComparison(tokens[labelIndex])))
+        {
+            return false;
+        }
+
+        var precedingColumns = CountPrecedingTableHeaderMatches(tokens, labelIndex);
+        if (precedingColumns == 0)
+        {
+            return false;
+        }
+
+        return TryReadCandidateValueFromFragmentedTokens(tokens, labelIndex + 1, 20, options, out invoiceNumber);
     }
 
     private static bool TryReadCandidateFromFragmentedInvoiceLabel(
@@ -657,6 +693,9 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
     }
 
     private static int CountPrecedingTableColumns(IReadOnlyList<string> tokens, int labelIndex)
+        => CountPrecedingTableHeaderMatches(tokens, labelIndex) / 2;
+
+    private static int CountPrecedingTableHeaderMatches(IReadOnlyList<string> tokens, int labelIndex)
     {
         const int maxHeaderLookbehind = 14;
         var count = 0;
@@ -671,7 +710,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
             }
         }
 
-        return count / 2;
+        return count;
     }
 
     private static bool TryReadStandaloneInvoiceHeading(
@@ -832,7 +871,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         => FocusedInvoiceLabelRegex.IsMatch(normalizedToken);
 
     private static bool IsHungarianInvoiceNumberLabel(string normalizedToken)
-        => normalizedToken is "szamlaszam" or "szamla szama" or "szamla sorszama" or "sorszam";
+        => normalizedToken is "szamlaszam" or "szamla szam" or "szamla szama" or "szamla sorszama" or "sorszam";
 
     private static bool IsStrongExplicitInvoiceLabel(string normalizedToken)
         => normalizedToken.Contains("invoice number", StringComparison.Ordinal)
