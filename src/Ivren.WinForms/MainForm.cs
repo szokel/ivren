@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Principal;
 using System.Text.Json;
 using Ivren.Core.Contracts;
 using Ivren.Core.Models;
@@ -20,6 +21,7 @@ public partial class MainForm : Form
     private string? _lastUsedFailedFolder;
     private string? _lastUsedAuditLogFolder;
     private string? _selectedResultPdfPath;
+    private UserStatePathResolution? _userStatePathResolution;
 
     public MainForm(IInvoiceFileProcessor invoiceFileProcessor)
     {
@@ -431,6 +433,7 @@ public partial class MainForm : Form
     private void WriteStartupDiagnostics()
     {
         AppendLog("Startup diagnostics:");
+        AppendLog($"Running as Windows user: {GetWindowsIdentityName()}");
         AppendLog($"App base directory: {AppContext.BaseDirectory}");
         AppendLog($"Executable path: {Application.ExecutablePath}");
 
@@ -440,12 +443,21 @@ public partial class MainForm : Form
         var settingsPath = Path.Combine(AppContext.BaseDirectory, SettingsFileName);
         var supplierProfilesPath = Path.Combine(AppContext.BaseDirectory, "Ivren.SupplierProfiles.json");
         var userStatePath = GetUserStateFilePath();
+        var userStateResolution = GetUserStatePathResolution();
 
         AppendFileDiagnostic("Ivren.Core.dll", coreAssemblyPath);
         AppendLog($"Ivren.Core assembly: {coreAssembly.FullName}");
         AppendLog($"WinForms assembly: {winFormsAssembly.FullName}");
         AppendFileDiagnostic("Settings file", settingsPath);
         AppendFileDiagnostic("Supplier profiles file", supplierProfilesPath);
+        if (!string.IsNullOrWhiteSpace(userStateResolution.WarningMessage))
+        {
+            AppendLog(userStateResolution.WarningMessage);
+        }
+
+        AppendLog($"User-state root mode: {userStateResolution.Mode}");
+        AppendLog($"Resolved user-state root folder: {userStateResolution.RootFolderPath}");
+        AppendLog($"Resolved user-state file path: {userStateResolution.FilePath}");
         AppendFileDiagnostic("User state file", userStatePath);
         AppendLog($"XML encoding support: {string.Join("; ", XmlInvoiceDataExtractor.GetXmlEncodingSupportDiagnostics())}");
         AppendLog(string.Empty);
@@ -903,10 +915,114 @@ public partial class MainForm : Form
         }
     }
 
-    private static string GetUserStateFilePath()
+    private string GetUserStateFilePath()
+        => GetUserStatePathResolution().FilePath;
+
+    private UserStatePathResolution GetUserStatePathResolution()
     {
-        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        return Path.Combine(localAppData, "Ivren", UserStateFileName);
+        if (_userStatePathResolution is not null)
+        {
+            return _userStatePathResolution;
+        }
+
+        _userStatePathResolution = ResolveUserStatePath();
+        return _userStatePathResolution;
+    }
+
+    private UserStatePathResolution ResolveUserStatePath()
+    {
+        var localAppDataRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Ivren");
+        var configuredRoot = ReadConfiguredUserStateRootFolder();
+
+        if (string.IsNullOrWhiteSpace(configuredRoot))
+        {
+            return new UserStatePathResolution(
+                "LocalAppData default",
+                localAppDataRoot,
+                Path.Combine(localAppDataRoot, UserStateFileName));
+        }
+
+        try
+        {
+            var normalizedConfiguredRoot = Path.GetFullPath(configuredRoot.Trim());
+            Directory.CreateDirectory(normalizedConfiguredRoot);
+
+            var sanitizedUserName = GetSanitizedWindowsAccountName();
+            var userRoot = Path.Combine(normalizedConfiguredRoot, sanitizedUserName);
+            Directory.CreateDirectory(userRoot);
+
+            return new UserStatePathResolution(
+                "configured override",
+                userRoot,
+                Path.Combine(userRoot, UserStateFileName));
+        }
+        catch (Exception exception) when (exception is IOException
+            or UnauthorizedAccessException
+            or ArgumentException
+            or NotSupportedException)
+        {
+            var warning = $"Warning: configured UserStateRootFolder could not be used: {configuredRoot}. {exception.Message} Falling back to LocalAppData.";
+            return new UserStatePathResolution(
+                "fallback",
+                localAppDataRoot,
+                Path.Combine(localAppDataRoot, UserStateFileName),
+                warning);
+        }
+    }
+
+    private static string? ReadConfiguredUserStateRootFolder()
+    {
+        var settingsPath = Path.Combine(AppContext.BaseDirectory, SettingsFileName);
+        if (!File.Exists(settingsPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(settingsPath);
+            return JsonSerializer.Deserialize<StartupSettings>(json)?.UserStateRootFolder;
+        }
+        catch (Exception exception) when (exception is JsonException
+            or IOException
+            or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private static string GetWindowsIdentityName()
+    {
+        try
+        {
+            return WindowsIdentity.GetCurrent().Name;
+        }
+        catch (Exception exception) when (exception is UnauthorizedAccessException
+            or InvalidOperationException)
+        {
+            return Environment.UserName;
+        }
+    }
+
+    private static string GetSanitizedWindowsAccountName()
+    {
+        var identityName = GetWindowsIdentityName();
+        var accountName = identityName.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+        if (string.IsNullOrWhiteSpace(accountName))
+        {
+            accountName = Environment.UserName;
+        }
+
+        var invalidCharacters = Path.GetInvalidFileNameChars()
+            .Concat(['\\', '/', ':'])
+            .ToHashSet();
+        var sanitizedCharacters = accountName
+            .Select(character => invalidCharacters.Contains(character) ? '_' : character)
+            .ToArray();
+        var sanitized = new string(sanitizedCharacters).Trim();
+        return string.IsNullOrWhiteSpace(sanitized) ? "UnknownUser" : sanitized;
     }
 
     private void UpdateProcessFolderButtonState()
@@ -991,6 +1107,8 @@ public partial class MainForm : Form
         public string? FailedFolder { get; init; }
 
         public string? AuditLogFolder { get; init; }
+
+        public string? UserStateRootFolder { get; init; }
     }
 
     private sealed class UserState
@@ -1015,4 +1133,10 @@ public partial class MainForm : Form
     private sealed record ResultRowFilePaths(
         string SourceFilePath,
         string? TargetFilePath);
+
+    private sealed record UserStatePathResolution(
+        string Mode,
+        string RootFolderPath,
+        string FilePath,
+        string? WarningMessage = null);
 }
