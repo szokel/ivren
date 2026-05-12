@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ivren.Core", "src\Ivren.Cor
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ivren.WinForms", "src\Ivren.WinForms\Ivren.WinForms.csproj", "{7FD6ED25-DA6A-4FA2-9077-814D5A0061BF}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ivren.Service", "src\Ivren.Service\Ivren.Service.csproj", "{B3E5D116-8B13-4B16-9BA8-748A72A1A8C4}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -26,9 +28,14 @@ Global
 		{7FD6ED25-DA6A-4FA2-9077-814D5A0061BF}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7FD6ED25-DA6A-4FA2-9077-814D5A0061BF}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7FD6ED25-DA6A-4FA2-9077-814D5A0061BF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B3E5D116-8B13-4B16-9BA8-748A72A1A8C4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B3E5D116-8B13-4B16-9BA8-748A72A1A8C4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B3E5D116-8B13-4B16-9BA8-748A72A1A8C4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B3E5D116-8B13-4B16-9BA8-748A72A1A8C4}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{04692097-DEBD-49D4-ACCE-544FA0EE93F9} = {05DF8415-A32F-4072-897D-CE1ABB04CA95}
 		{7FD6ED25-DA6A-4FA2-9077-814D5A0061BF} = {05DF8415-A32F-4072-897D-CE1ABB04CA95}
+		{B3E5D116-8B13-4B16-9BA8-748A72A1A8C4} = {05DF8415-A32F-4072-897D-CE1ABB04CA95}
 	EndGlobalSection
 EndGlobal

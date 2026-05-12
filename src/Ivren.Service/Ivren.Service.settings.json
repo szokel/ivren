@@ -1,0 +1,9 @@
+{
+  "InputFolder": "D:\\DATA\\ivren\\input",
+  "RenamedFolder": "D:\\DATA\\ivren\\renamed",
+  "FailedFolder": "D:\\DATA\\ivren\\failed",
+  "AuditLogFolder": "D:\\DATA\\ivren\\logs",
+  "PollIntervalSeconds": 30,
+  "FileReadyDelaySeconds": 10,
+  "DryRun": false
+}
