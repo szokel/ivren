@@ -20,6 +20,7 @@ $renamedFolder = Join-Path $DataRoot "renamed"
 $failedFolder = Join-Path $DataRoot "failed"
 $logsFolder = Join-Path $DataRoot "logs"
 $displayName = "Ivren PDF Invoice Rename Service (Local Test)"
+$localAccountName = "$env:COMPUTERNAME\$UserName"
 
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -141,7 +142,7 @@ Assert-Administrator
 Write-Host "== Ivren local service test setup =="
 Write-Host "Repository:        $repoRoot"
 Write-Host "Service name:      $ServiceName"
-Write-Host "Service account:   .\$UserName"
+Write-Host "Service account:   $localAccountName"
 Write-Host "Data root:         $DataRoot"
 Write-Host "Service root:      $ServiceRoot"
 Write-Host "DryRun:            $($DryRun.IsPresent)"
@@ -172,14 +173,14 @@ $settingsPath = Join-Path $ServiceRoot "Ivren.Service.settings.json"
 $settings | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $settingsPath -Encoding UTF8
 Write-Host "Wrote settings: $settingsPath"
 
-$accountName = ".\$UserName"
+$accountName = $localAccountName
 Grant-FolderPermission -Path $DataRoot -Account $accountName -Permission "(OI)(CI)M"
 Grant-FolderPermission -Path $ServiceRoot -Account $accountName -Permission "(OI)(CI)RX"
 
 Remove-ServiceIfRequested -Name $ServiceName
 
 if (-not (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
-    $credential = [pscredential]::new($accountName, $password)
+    $credential = [pscredential]::new($localAccountName, $password)
 
     Write-Host "Creating Windows service: $ServiceName"
     New-Service `
