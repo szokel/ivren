@@ -55,6 +55,7 @@ The script will:
 - Publish `Ivren.Service`.
 - Write `Ivren.Service.settings.json` beside the service executable.
 - Grant the service account access to the data and service folders.
+- Grant the service account the local `Log on as a service` right.
 - Create and start `IvrenServiceTest`.
 
 If `IvrenServiceTest` already exists and you want to recreate it:

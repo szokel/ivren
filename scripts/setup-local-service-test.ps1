@@ -46,6 +46,21 @@ function Invoke-Checked {
     }
 }
 
+function Invoke-CheckedQuiet {
+    param(
+        [Parameter(Mandatory = $true)]
+        [scriptblock] $Command,
+        [Parameter(Mandatory = $true)]
+        [string] $Description
+    )
+
+    $output = & $Command 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $message = ($output | Out-String).Trim()
+        throw "Command failed with exit code ${LASTEXITCODE}: $Description`n$message"
+    }
+}
+
 function Ensure-Directory {
     param([Parameter(Mandatory = $true)][string] $Path)
 
@@ -134,7 +149,121 @@ function Grant-FolderPermission {
         [string] $Permission
     )
 
-    Invoke-Checked { icacls $Path /grant "${Account}:$Permission" /T } "icacls $Path /grant ${Account}:$Permission"
+    Invoke-CheckedQuiet { icacls $Path /grant "${Account}:$Permission" /T } "icacls $Path /grant ${Account}:$Permission"
+    Write-Host "Granted $Permission on $Path to $Account"
+}
+
+function Grant-LogOnAsServiceRight {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Account
+    )
+
+    Write-Host "Granting 'Log on as a service' to $Account"
+
+    $script = @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+
+public static class LsaRights
+{
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LSA_OBJECT_ATTRIBUTES
+    {
+        public int Length;
+        public IntPtr RootDirectory;
+        public IntPtr ObjectName;
+        public int Attributes;
+        public IntPtr SecurityDescriptor;
+        public IntPtr SecurityQualityOfService;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LSA_UNICODE_STRING
+    {
+        public ushort Length;
+        public ushort MaximumLength;
+        public IntPtr Buffer;
+    }
+
+    [DllImport("advapi32.dll", SetLastError = true, PreserveSig = true)]
+    private static extern uint LsaOpenPolicy(
+        IntPtr systemName,
+        ref LSA_OBJECT_ATTRIBUTES objectAttributes,
+        int desiredAccess,
+        out IntPtr policyHandle);
+
+    [DllImport("advapi32.dll", SetLastError = true, PreserveSig = true)]
+    private static extern uint LsaAddAccountRights(
+        IntPtr policyHandle,
+        byte[] accountSid,
+        LSA_UNICODE_STRING[] userRights,
+        int countOfRights);
+
+    [DllImport("advapi32.dll")]
+    private static extern int LsaClose(IntPtr objectHandle);
+
+    [DllImport("advapi32.dll")]
+    private static extern int LsaNtStatusToWinError(uint status);
+
+    public static void GrantLogOnAsService(string accountName)
+    {
+        const int POLICY_CREATE_ACCOUNT = 0x00000010;
+        const int POLICY_LOOKUP_NAMES = 0x00000800;
+        const int POLICY_VIEW_LOCAL_INFORMATION = 0x00000001;
+
+        var sid = (SecurityIdentifier)new NTAccount(accountName).Translate(typeof(SecurityIdentifier));
+        var sidBytes = new byte[sid.BinaryLength];
+        sid.GetBinaryForm(sidBytes, 0);
+
+        var objectAttributes = new LSA_OBJECT_ATTRIBUTES();
+        IntPtr policyHandle;
+        var status = LsaOpenPolicy(
+            IntPtr.Zero,
+            ref objectAttributes,
+            POLICY_CREATE_ACCOUNT | POLICY_LOOKUP_NAMES | POLICY_VIEW_LOCAL_INFORMATION,
+            out policyHandle);
+
+        if (status != 0)
+        {
+            throw new Win32Exception(LsaNtStatusToWinError(status), "LsaOpenPolicy failed.");
+        }
+
+        try
+        {
+            var right = "SeServiceLogonRight";
+            var unicodeRight = new LSA_UNICODE_STRING
+            {
+                Length = (ushort)(right.Length * 2),
+                MaximumLength = (ushort)((right.Length + 1) * 2),
+                Buffer = Marshal.StringToHGlobalUni(right)
+            };
+
+            try
+            {
+                status = LsaAddAccountRights(policyHandle, sidBytes, new[] { unicodeRight }, 1);
+                if (status != 0)
+                {
+                    throw new Win32Exception(LsaNtStatusToWinError(status), "LsaAddAccountRights failed.");
+                }
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(unicodeRight.Buffer);
+            }
+        }
+        finally
+        {
+            LsaClose(policyHandle);
+        }
+    }
+}
+'@
+
+    Add-Type -TypeDefinition $script -ErrorAction Stop
+    [LsaRights]::GrantLogOnAsService($Account)
 }
 
 Assert-Administrator
@@ -176,6 +305,7 @@ Write-Host "Wrote settings: $settingsPath"
 $accountName = $localAccountName
 Grant-FolderPermission -Path $DataRoot -Account $accountName -Permission "(OI)(CI)M"
 Grant-FolderPermission -Path $ServiceRoot -Account $accountName -Permission "(OI)(CI)RX"
+Grant-LogOnAsServiceRight -Account $accountName
 
 Remove-ServiceIfRequested -Name $ServiceName
 
