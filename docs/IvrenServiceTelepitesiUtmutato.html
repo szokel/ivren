@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8">
+  <title>Ivren Service telepítési útmutató</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm 16mm;
+    }
+
+    body {
+      color: #18212f;
+      font-family: "Aptos", "Segoe UI", Arial, sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.42;
+      margin: 0;
+    }
+
+    h1 {
+      border-bottom: 2px solid #2d6da3;
+      color: #173b57;
+      font-size: 24pt;
+      font-weight: 650;
+      margin: 0 0 8mm;
+      padding-bottom: 4mm;
+    }
+
+    h2 {
+      break-after: avoid;
+      color: #245f91;
+      font-size: 15pt;
+      margin: 8mm 0 3mm;
+    }
+
+    h3 {
+      break-after: avoid;
+      color: #173b57;
+      font-size: 12pt;
+      margin: 5mm 0 2mm;
+    }
+
+    p {
+      margin: 0 0 3mm;
+    }
+
+    ul, ol {
+      margin: 0 0 4mm 7mm;
+      padding: 0;
+    }
+
+    li {
+      margin: 0 0 1.5mm;
+    }
+
+    code, pre {
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 9pt;
+    }
+
+    pre {
+      background: #f3f6f8;
+      border: 1px solid #d5dee7;
+      border-radius: 4px;
+      margin: 2mm 0 4mm;
+      padding: 3mm;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    table {
+      border-collapse: collapse;
+      margin: 3mm 0 5mm;
+      width: 100%;
+    }
+
+    th {
+      background: #e7eef5;
+      color: #173b57;
+      font-weight: 650;
+      text-align: left;
+    }
+
+    th, td {
+      border: 1px solid #b9c6d3;
+      padding: 2.2mm 2.8mm;
+      vertical-align: top;
+    }
+
+    .meta {
+      color: #4f6070;
+      font-size: 10pt;
+      margin-bottom: 6mm;
+    }
+
+    .callout {
+      background: #f2f7fb;
+      border-left: 4px solid #2d6da3;
+      margin: 4mm 0;
+      padding: 3mm 4mm;
+    }
+
+    .warning {
+      background: #fff8e8;
+      border-left-color: #c47a00;
+    }
+
+    .page-break {
+      break-before: page;
+    }
+  </style>
+</head>
+<body>
+  <h1>Ivren Service telepítési útmutató</h1>
+  <p class="meta">Célközönség: üzemeltetés · Környezet: WOVER szerver · Kiadás dátuma: 2026-05-25</p>
+
+  <div class="callout">
+    <strong>Röviden:</strong> az Ivren Service a bejövő PDF számlákat figyeli, megpróbálja kiolvasni belőlük a számlaszámot,
+    majd siker esetén átnevezi és a sikeres mappába mozgatja őket. Sikertelen feldolgozás esetén a PDF a hibás mappába kerül.
+    Minden éles feldolgozásról audit log készül.
+  </div>
+
+  <h2>1. Átadott telepítési csomag</h2>
+  <p>Az üzemeltetés részére átadott ZIP fájl neve:</p>
+  <pre>Ivren.Service-win-x64-2026-05-25.zip</pre>
+
+  <p>A ZIP tartalma:</p>
+  <ul>
+    <li><code>Ivren.Service.exe</code> és a hozzá tartozó futtatási fájlok.</li>
+    <li><code>Ivren.Service.settings.json</code> konfigurációs fájl.</li>
+    <li><code>Ivren.SupplierProfiles.json</code> szállítói profil konfiguráció.</li>
+    <li><code>IvrenServiceTelepitesiUtmutato.pdf</code> jelen telepítési útmutató.</li>
+  </ul>
+
+  <h2>2. Javasolt éles szerver mappák</h2>
+  <table>
+    <tr><th>Funkció</th><th>Javasolt útvonal</th></tr>
+    <tr><td>Service program mappája</td><td><code>C:\var\ivren\service</code></td></tr>
+    <tr><td>Input mappa</td><td><code>D:\DATA\ivren\input</code></td></tr>
+    <tr><td>Sikeresen átnevezett PDF-ek</td><td><code>D:\DATA\ivren\renamed</code></td></tr>
+    <tr><td>Sikertelen PDF-ek</td><td><code>D:\DATA\ivren\failed</code></td></tr>
+    <tr><td>Service log és audit log</td><td><code>D:\DATA\ivren\logs</code></td></tr>
+  </table>
+
+  <p>Ajánlott service account:</p>
+  <pre>MEGA\svc_ivren</pre>
+
+  <h2>3. Előfeltételek</h2>
+  <ul>
+    <li>Windows Server a WOVER gépen.</li>
+    <li>Helyi admin jogosultság a telepítés idejére.</li>
+    <li>A <code>MEGA\svc_ivren</code> service account előzetesen létrehozva, ismert jelszóval.</li>
+    <li>A service account kapjon Modify jogosultságot a <code>D:\DATA\ivren</code> mappára.</li>
+    <li>A service account kapjon Read &amp; Execute jogosultságot a <code>C:\var\ivren\service</code> mappára.</li>
+    <li>A service account kapja meg a <strong>Log on as a service</strong> helyi biztonsági jogot.</li>
+  </ul>
+
+  <h2>4. Telepítési lépések</h2>
+  <h3>4.1. Mappák létrehozása</h3>
+  <p>Emelt jogosultságú PowerShell ablakban futtassa:</p>
+  <pre>New-Item -ItemType Directory -Force -Path `
+  "C:\var\ivren\service", `
+  "D:\DATA\ivren\input", `
+  "D:\DATA\ivren\renamed", `
+  "D:\DATA\ivren\failed", `
+  "D:\DATA\ivren\logs"</pre>
+
+  <h3>4.2. ZIP kicsomagolása</h3>
+  <p>Csomagolja ki a ZIP teljes tartalmát ebbe a mappába:</p>
+  <pre>C:\var\ivren\service</pre>
+
+  <p>Ellenőrizze, hogy létezik:</p>
+  <pre>C:\var\ivren\service\Ivren.Service.exe
+C:\var\ivren\service\Ivren.Service.settings.json
+C:\var\ivren\service\Ivren.SupplierProfiles.json</pre>
+
+  <h3>4.3. Jogosultságok beállítása</h3>
+  <pre>icacls "D:\DATA\ivren" /grant "MEGA\svc_ivren:(OI)(CI)M" /T
+icacls "C:\var\ivren\service" /grant "MEGA\svc_ivren:(OI)(CI)RX" /T</pre>
+
+  <p>A <strong>Log on as a service</strong> jog beállítható a Local Security Policy felületen:</p>
+  <ol>
+    <li>Futtatás: <code>secpol.msc</code></li>
+    <li>Local Policies → User Rights Assignment</li>
+    <li>Log on as a service</li>
+    <li>Adja hozzá: <code>MEGA\svc_ivren</code></li>
+  </ol>
+
+  <h3>4.4. Konfiguráció ellenőrzése</h3>
+  <p>Nyissa meg:</p>
+  <pre>C:\var\ivren\service\Ivren.Service.settings.json</pre>
+
+  <p>Alapértelmezett éles konfiguráció:</p>
+  <pre>{
+  "InputFolder": "D:\\DATA\\ivren\\input",
+  "RenamedFolder": "D:\\DATA\\ivren\\renamed",
+  "FailedFolder": "D:\\DATA\\ivren\\failed",
+  "AuditLogFolder": "D:\\DATA\\ivren\\logs",
+  "PollIntervalSeconds": 30,
+  "FileReadyDelaySeconds": 10,
+  "DryRun": false
+}</pre>
+
+  <div class="callout warning">
+    <strong>Első éles próba előtt ajánlott:</strong> állítsa a <code>DryRun</code> értéket <code>true</code>-ra,
+    indítsa el a service-t, dobjon be egy teszt PDF-et, ellenőrizze a logokat, majd sikeres ellenőrzés után állítsa vissza
+    <code>false</code>-ra és indítsa újra a service-t.
+  </div>
+
+  <h3>4.5. Windows Service létrehozása</h3>
+  <p>Emelt jogosultságú parancssorból:</p>
+  <pre>sc.exe create IvrenService binPath= "C:\var\ivren\service\Ivren.Service.exe" start= auto obj= "MEGA\svc_ivren" DisplayName= "Ivren PDF Invoice Rename Service"</pre>
+
+  <p>A service account jelszavát a Windows service konfigurációban kell megadni. Ha a fenti parancs után szükséges, használható a Services MMC:</p>
+  <pre>services.msc</pre>
+
+  <p>Keresse meg: <strong>Ivren PDF Invoice Rename Service</strong>, majd Log On fülön ellenőrizze a service accountot és jelszót.</p>
+
+  <h3>4.6. Service indítása</h3>
+  <pre>sc.exe start IvrenService
+sc.exe query IvrenService</pre>
+
+  <p>Sikeres állapot:</p>
+  <pre>STATE : 4 RUNNING</pre>
+
+  <h2 class="page-break">5. Első működési ellenőrzés</h2>
+  <ol>
+    <li>Másoljon egy teszt PDF-et az input mappába: <code>D:\DATA\ivren\input</code>.</li>
+    <li>Várjon legalább <code>FileReadyDelaySeconds + PollIntervalSeconds</code> ideig.</li>
+    <li>Siker esetén a PDF megjelenik: <code>D:\DATA\ivren\renamed</code>.</li>
+    <li>Sikertelen feldolgozás esetén a PDF megjelenik: <code>D:\DATA\ivren\failed</code>.</li>
+    <li>Ellenőrizze a service logot és az audit logot.</li>
+  </ol>
+
+  <h3>Service log</h3>
+  <pre>Get-Content "D:\DATA\ivren\logs\ivren-service-$(Get-Date -Format yyyy-MM-dd).log" -Tail 80</pre>
+
+  <h3>Audit log</h3>
+  <pre>Get-Content "D:\DATA\ivren\logs\ivren-audit-$(Get-Date -Format yyyy-MM-dd).log" -Tail 20</pre>
+
+  <p>A service logban induláskor látszódnia kell:</p>
+  <pre>Ivren PDF Invoice Rename Service starting.
+Running as Windows user: MEGA\svc_ivren
+Settings file: C:\var\ivren\service\Ivren.Service.settings.json
+Supplier profiles file: C:\var\ivren\service\Ivren.SupplierProfiles.json</pre>
+
+  <h2>6. Frissítés új verzióra</h2>
+  <ol>
+    <li>Állítsa le a service-t: <code>sc.exe stop IvrenService</code>.</li>
+    <li>Készítsen mentést a jelenlegi <code>C:\var\ivren\service</code> mappáról.</li>
+    <li>Csomagolja ki az új ZIP tartalmát a service mappába.</li>
+    <li>Ellenőrizze, hogy az <code>Ivren.Service.settings.json</code> környezetspecifikus értékei megfelelőek.</li>
+    <li>Indítsa el a service-t: <code>sc.exe start IvrenService</code>.</li>
+    <li>Ellenőrizze a service logot és egy teszt PDF feldolgozását.</li>
+  </ol>
+
+  <h2>7. Rollback</h2>
+  <ol>
+    <li>Állítsa le a service-t.</li>
+    <li>Állítsa vissza a korábbi service mappa mentését.</li>
+    <li>Indítsa újra a service-t.</li>
+    <li>Ellenőrizze a logot és a feldolgozást.</li>
+  </ol>
+
+  <h2>8. Hibakeresés</h2>
+  <table>
+    <tr><th>Jelenség</th><th>Teendő</th></tr>
+    <tr><td>A service nem indul</td><td>Ellenőrizze a service account jelszavát és a <strong>Log on as a service</strong> jogot.</td></tr>
+    <tr><td>Nincs feldolgozás</td><td>Ellenőrizze, hogy az input mappa létezik-e, és közvetlenül abban vannak-e a PDF-ek.</td></tr>
+    <tr><td>A fájlok nem mozdulnak</td><td>Ellenőrizze a service logban, hogy a fájl nem túl friss vagy zárolt-e.</td></tr>
+    <tr><td>Minden ciklus kimarad</td><td>Ellenőrizze a konfigurált mappák meglétét és jogosultságait.</td></tr>
+    <tr><td>XML profilok nem érvényesülnek</td><td>Ellenőrizze, hogy az <code>Ivren.SupplierProfiles.json</code> az exe mellett van-e.</td></tr>
+    <tr><td>Nincs audit log</td><td>Éles módban ellenőrizze az audit log mappa jogosultságát; dry-run módban audit log nem íródik.</td></tr>
+  </table>
+
+  <h2>9. Eltávolítás</h2>
+  <pre>sc.exe stop IvrenService
+sc.exe delete IvrenService</pre>
+
+  <p>Az adat- és logmappákat csak üzleti jóváhagyással szabad törölni.</p>
+</body>
+</html>
