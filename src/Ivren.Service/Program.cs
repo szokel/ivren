@@ -4,7 +4,18 @@ using Ivren.Service;
 
 var baseDirectory = AppContext.BaseDirectory;
 var settingsPath = Path.Combine(baseDirectory, ServiceSettings.FileName);
-var settings = ServiceSettings.Load(settingsPath, out var settingsLoadMessage);
+ServiceSettings settings;
+try
+{
+    settings = ServiceSettings.Load(settingsPath);
+}
+catch (InvalidOperationException exception)
+{
+    WriteStartupFailure(baseDirectory, settingsPath, exception);
+    Environment.ExitCode = 1;
+    return;
+}
+
 var supplierProfilesPath = Path.Combine(baseDirectory, "Ivren.SupplierProfiles.json");
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -41,10 +52,22 @@ builder.Services.AddHostedService<IvrenWorker>();
 
 var host = builder.Build();
 
-if (!string.IsNullOrWhiteSpace(settingsLoadMessage))
-{
-    var logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Ivren.Service.Startup");
-    logger.LogWarning("{Message}", settingsLoadMessage);
-}
-
 await host.RunAsync();
+
+static void WriteStartupFailure(string baseDirectory, string settingsPath, Exception exception)
+{
+    var message = $"Ivren service startup failed. Settings file: {settingsPath}. {exception.Message}";
+    Console.Error.WriteLine(message);
+
+    try
+    {
+        var logFilePath = Path.Combine(baseDirectory, $"ivren-startup-error-{DateTime.Now:yyyy-MM-dd}.log");
+        File.AppendAllText(
+            logFilePath,
+            $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} {message}{Environment.NewLine}{exception}{Environment.NewLine}");
+    }
+    catch
+    {
+        // If the service folder is read-only, the console/SCM failure still reports the startup error.
+    }
+}

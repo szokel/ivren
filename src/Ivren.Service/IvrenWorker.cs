@@ -63,29 +63,60 @@ public sealed class IvrenWorker : BackgroundService
         _logger.LogInformation("Settings file: {SettingsPath}", _runtimePaths.SettingsPath);
         _logger.LogInformation("Supplier profiles file: {SupplierProfilesPath}", _runtimePaths.SupplierProfilesPath);
         _logger.LogInformation(
-            "Configuration: InputFolder={InputFolder}; RenamedFolder={RenamedFolder}; FailedFolder={FailedFolder}; AuditLogFolder={AuditLogFolder}; PollIntervalSeconds={PollIntervalSeconds}; FileReadyDelaySeconds={FileReadyDelaySeconds}; DryRun={DryRun}",
-            _settings.InputFolder,
-            _settings.RenamedFolder,
+            "Configuration: FolderPairCount={FolderPairCount}; FailedFolder={FailedFolder}; AuditLogFolder={AuditLogFolder}; PollIntervalSeconds={PollIntervalSeconds}; FileReadyDelaySeconds={FileReadyDelaySeconds}; DryRun={DryRun}",
+            _settings.GetFolderPairs().Count,
             _settings.FailedFolder,
             _settings.AuditLogFolder,
             _settings.PollIntervalSeconds,
             _settings.FileReadyDelaySeconds,
             _settings.DryRun);
+
+        foreach (var folderPair in _settings.GetFolderPairs())
+        {
+            _logger.LogInformation(
+                "Configured folder pair: CompanyCode={CompanyCode}; InputFolder={InputFolder}; RenamedFolder={RenamedFolder}",
+                folderPair.CompanyCode,
+                folderPair.InputFolder,
+                folderPair.RenamedFolder);
+        }
     }
 
     private void ProcessCycle(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Processing cycle started.");
-        if (!ValidateConfiguredFolders())
+        if (!ValidateGlobalFolders())
         {
-            _logger.LogWarning("Processing cycle skipped because one or more configured folders are missing.");
+            _logger.LogWarning("Processing cycle skipped because one or more global configured folders are missing.");
+            return;
+        }
+
+        foreach (var folderPair in _settings.GetFolderPairs())
+        {
+            if (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            ProcessFolderPair(folderPair, stoppingToken);
+        }
+
+        _logger.LogInformation("Processing cycle finished.");
+    }
+
+    private void ProcessFolderPair(ServiceFolderPair folderPair, CancellationToken stoppingToken)
+    {
+        if (!ValidateFolderPair(folderPair))
+        {
+            _logger.LogWarning(
+                "Folder pair skipped because one or more configured folders are missing. CompanyCode={CompanyCode}",
+                folderPair.CompanyCode);
             return;
         }
 
         string[] pdfFiles;
         try
         {
-            pdfFiles = Directory.GetFiles(_settings.InputFolder, "*.pdf", SearchOption.TopDirectoryOnly)
+            pdfFiles = Directory.GetFiles(folderPair.InputFolder, "*.pdf", SearchOption.TopDirectoryOnly)
                 .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
         }
@@ -93,11 +124,19 @@ public sealed class IvrenWorker : BackgroundService
             or UnauthorizedAccessException
             or DirectoryNotFoundException)
         {
-            _logger.LogError(exception, "Could not enumerate PDF files in input folder: {InputFolder}", _settings.InputFolder);
+            _logger.LogError(
+                exception,
+                "Could not enumerate PDF files in input folder. CompanyCode={CompanyCode}; InputFolder={InputFolder}",
+                folderPair.CompanyCode,
+                folderPair.InputFolder);
             return;
         }
 
-        _logger.LogInformation("Processing cycle found {PdfCount} PDF file(s).", pdfFiles.Length);
+        _logger.LogInformation(
+            "Processing folder pair found {PdfCount} PDF file(s). CompanyCode={CompanyCode}; InputFolder={InputFolder}",
+            pdfFiles.Length,
+            folderPair.CompanyCode,
+            folderPair.InputFolder);
         foreach (var pdfFile in pdfFiles)
         {
             if (stoppingToken.IsCancellationRequested)
@@ -105,19 +144,23 @@ public sealed class IvrenWorker : BackgroundService
                 return;
             }
 
-            ProcessFileIfReady(pdfFile);
+            ProcessFileIfReady(pdfFile, folderPair);
         }
-
-        _logger.LogInformation("Processing cycle finished.");
     }
 
-    private bool ValidateConfiguredFolders()
+    private bool ValidateGlobalFolders()
     {
         var valid = true;
-        valid &= ValidateFolder("InputFolder", _settings.InputFolder);
-        valid &= ValidateFolder("RenamedFolder", _settings.RenamedFolder);
         valid &= ValidateFolder("FailedFolder", _settings.FailedFolder);
         valid &= ValidateFolder("AuditLogFolder", _settings.AuditLogFolder);
+        return valid;
+    }
+
+    private bool ValidateFolderPair(ServiceFolderPair folderPair)
+    {
+        var valid = true;
+        valid &= ValidateFolder($"InputFolder[{folderPair.CompanyCode}]", folderPair.InputFolder);
+        valid &= ValidateFolder($"RenamedFolder[{folderPair.CompanyCode}]", folderPair.RenamedFolder);
         return valid;
     }
 
@@ -138,15 +181,23 @@ public sealed class IvrenWorker : BackgroundService
         return false;
     }
 
-    private void ProcessFileIfReady(string pdfFile)
+    private void ProcessFileIfReady(string pdfFile, ServiceFolderPair folderPair)
     {
         if (!IsFileReady(pdfFile, out var notReadyReason))
         {
-            _logger.LogInformation("Skipping file that is not ready yet: {PdfFile}. Reason: {Reason}", pdfFile, notReadyReason);
+            _logger.LogInformation(
+                "Skipping file that is not ready yet: {PdfFile}. CompanyCode={CompanyCode}; Reason={Reason}",
+                pdfFile,
+                folderPair.CompanyCode,
+                notReadyReason);
             return;
         }
 
-        _logger.LogInformation("Processing file started: {PdfFile}", pdfFile);
+        _logger.LogInformation(
+            "Processing file started: {PdfFile}. CompanyCode={CompanyCode}; TargetFolder={RenamedFolder}",
+            pdfFile,
+            folderPair.CompanyCode,
+            folderPair.RenamedFolder);
 
         try
         {
@@ -154,7 +205,7 @@ public sealed class IvrenWorker : BackgroundService
                 pdfFile,
                 new InvoiceFileProcessingOptions(
                     _settings.DryRun,
-                    _settings.RenamedFolder,
+                    folderPair.RenamedFolder,
                     _settings.FailedFolder,
                     _settings.AuditLogFolder));
 
@@ -164,8 +215,9 @@ public sealed class IvrenWorker : BackgroundService
             }
 
             _logger.LogInformation(
-                "Processing file finished: {PdfFile}. Status={Status}; Source={DetectionSource}; InvoiceNumber={InvoiceNumber}; Target={TargetFilePath}; Confidence={ConfidenceScore:0.00} {ConfidenceLevel}; Uncertain={IsUncertain}",
+                "Processing file finished: {PdfFile}. CompanyCode={CompanyCode}; Status={Status}; Source={DetectionSource}; InvoiceNumber={InvoiceNumber}; Target={TargetFilePath}; Confidence={ConfidenceScore:0.00} {ConfidenceLevel}; Uncertain={IsUncertain}",
                 pdfFile,
+                folderPair.CompanyCode,
                 result.Status,
                 result.DetectionSource,
                 result.InvoiceNumber ?? "(none)",
@@ -176,7 +228,11 @@ public sealed class IvrenWorker : BackgroundService
         }
         catch (Exception exception)
         {
-            _logger.LogError(exception, "Processing file failed with an unexpected exception: {PdfFile}", pdfFile);
+            _logger.LogError(
+                exception,
+                "Processing file failed with an unexpected exception: {PdfFile}. CompanyCode={CompanyCode}",
+                pdfFile,
+                folderPair.CompanyCode);
         }
     }
 

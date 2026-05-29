@@ -50,9 +50,11 @@ It validates:
 
 - The service starts from a published folder.
 - Settings are loaded from the executable folder.
+- Multiple company-specific input/output folder pairs are supported.
 - A valid invoice PDF is moved to the renamed folder.
 - An invalid PDF is moved to the failed folder.
 - Audit and service logs are written.
+- Structurally invalid service settings fail fast and write a startup error log instead of falling back to built-in folders.
 
 Temporary output is written under:
 

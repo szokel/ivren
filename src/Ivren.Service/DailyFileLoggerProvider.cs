@@ -38,7 +38,7 @@ public sealed class DailyFileLoggerProvider : ILoggerProvider
         {
             if (!Directory.Exists(_logFolderPath))
             {
-                return;
+                Directory.CreateDirectory(_logFolderPath);
             }
 
             var logFilePath = Path.Combine(_logFolderPath, $"ivren-service-{DateTime.Now:yyyy-MM-dd}.log");

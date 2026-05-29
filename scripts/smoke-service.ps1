@@ -4,8 +4,10 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $serviceProject = Join-Path $repoRoot "src\Ivren.Service\Ivren.Service.csproj"
 $workDir = Join-Path $repoRoot "tmp\smoke-service"
 $appDir = Join-Path $workDir "app"
-$inputDir = Join-Path $workDir "input"
-$renamedDir = Join-Path $workDir "renamed"
+$input01Dir = Join-Path $workDir "input\01"
+$inputT1Dir = Join-Path $workDir "input\T1"
+$renamed01Dir = Join-Path $workDir "renamed\01"
+$renamedT1Dir = Join-Path $workDir "renamed\T1"
 $failedDir = Join-Path $workDir "failed"
 $logDir = Join-Path $workDir "logs"
 
@@ -66,7 +68,7 @@ Write-Host "== Ivren Service smoke test =="
 Write-Host "Repository: $repoRoot"
 
 Remove-DirectorySafely -Path $workDir -ExpectedPrefix $workDir
-New-Item -ItemType Directory -Path $appDir, $inputDir, $renamedDir, $failedDir, $logDir | Out-Null
+New-Item -ItemType Directory -Path $appDir, $input01Dir, $inputT1Dir, $renamed01Dir, $renamedT1Dir, $failedDir, $logDir | Out-Null
 
 Write-Host "Publishing Service project to an isolated smoke-test folder..."
 Invoke-Checked { dotnet publish $serviceProject -c Debug -o $appDir -v minimal } "dotnet publish Ivren.Service"
@@ -76,12 +78,22 @@ if (-not (Test-Path -LiteralPath $sampleSource)) {
     throw "Required smoke sample is missing: $sampleSource"
 }
 
-Copy-Item -LiteralPath $sampleSource -Destination (Join-Path $inputDir "ace-smoke.pdf")
-Set-Content -LiteralPath (Join-Path $inputDir "invalid-smoke.pdf") -Value "This is intentionally not a valid PDF." -Encoding ASCII
+Copy-Item -LiteralPath $sampleSource -Destination (Join-Path $input01Dir "ace-smoke.pdf")
+Set-Content -LiteralPath (Join-Path $inputT1Dir "invalid-smoke.pdf") -Value "This is intentionally not a valid PDF." -Encoding ASCII
 
 $settings = [ordered]@{
-    InputFolder = $inputDir
-    RenamedFolder = $renamedDir
+    FolderPairs = @(
+        [ordered]@{
+            CompanyCode = "01"
+            InputFolder = $input01Dir
+            RenamedFolder = $renamed01Dir
+        },
+        [ordered]@{
+            CompanyCode = "T1"
+            InputFolder = $inputT1Dir
+            RenamedFolder = $renamedT1Dir
+        }
+    )
     FailedFolder = $failedDir
     AuditLogFolder = $logDir
     PollIntervalSeconds = 30
@@ -109,7 +121,7 @@ $process = Start-Process -FilePath $exePath `
     -PassThru
 
 try {
-    $renamedTarget = Join-Path $renamedDir "2026~9884.pdf"
+    $renamedTarget = Join-Path $renamed01Dir "2026~9884.pdf"
     $failedTarget = Join-Path $failedDir "invalid-smoke.pdf"
 
     $processed = Wait-Until -TimeoutSeconds 45 -Condition {
@@ -147,8 +159,56 @@ if ($auditText -notmatch '"outcome"\s*:\s*"Failed"') {
     throw "Audit log does not contain a Failed outcome."
 }
 
+$invalidSettings = [ordered]@{
+    FailedFolder = $failedDir
+    AuditLogFolder = $logDir
+    DryRun = $false
+}
+$invalidSettings | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $settingsPath -Encoding UTF8
+
+$invalidStdoutPath = Join-Path $workDir "invalid-settings.stdout.log"
+$invalidStderrPath = Join-Path $workDir "invalid-settings.stderr.log"
+$invalidProcess = Start-Process -FilePath $exePath `
+    -WorkingDirectory $appDir `
+    -RedirectStandardOutput $invalidStdoutPath `
+    -RedirectStandardError $invalidStderrPath `
+    -WindowStyle Hidden `
+    -PassThru
+
+try {
+    $startupFailed = Wait-Until -TimeoutSeconds 10 -Condition {
+        $invalidProcess.HasExited
+    }
+
+    if (-not $startupFailed) {
+        throw "Service did not fail fast for invalid settings within the timeout."
+    }
+
+    $invalidProcess.Refresh()
+    if ($invalidProcess.ExitCode -eq 0) {
+        throw "Service exited successfully even though settings were invalid."
+    }
+}
+finally {
+    if ($invalidProcess -and -not $invalidProcess.HasExited) {
+        Stop-Process -Id $invalidProcess.Id -Force
+        $null = $invalidProcess.WaitForExit(5000)
+    }
+}
+
+$startupErrorLog = Get-ChildItem -LiteralPath $appDir -Filter "ivren-startup-error-*.log" -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $startupErrorLog) {
+    throw "Startup error log was not written for invalid settings."
+}
+
+$invalidStderrText = Get-Content -LiteralPath $invalidStderrPath -Raw
+if ($invalidStderrText -notmatch "Settings file is invalid") {
+    throw "Invalid settings stderr did not contain the expected validation error."
+}
+
 Write-Host "Renamed output: $renamedTarget"
 Write-Host "Failed output:  $failedTarget"
 Write-Host "Audit log:      $($auditLog.FullName)"
 Write-Host "Service log:    $($serviceLog.FullName)"
+Write-Host "Startup error:  $($startupErrorLog.FullName)"
 Write-Host "Service smoke test passed."
