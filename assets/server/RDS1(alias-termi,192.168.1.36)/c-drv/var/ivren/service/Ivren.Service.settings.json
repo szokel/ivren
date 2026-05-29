@@ -1,0 +1,9 @@
+{
+  "InputFolder": "C:\SzallitoiSzamlak_Atnevezeshez\T1",
+  "RenamedFolder": "\\scala\SzallitoiSzamlak\T1",
+  "FailedFolder": "C:\SzallitoiSzamlak_Atnevezeshez\Program\szamlak\nem_atnevezheto_szamlak",
+  "AuditLogFolder": "C:\SzallitoiSzamlak_Atnevezeshez\Program\szamlak\audit_log",
+  "PollIntervalSeconds": 10,
+  "FileReadyDelaySeconds": 5,
+  "DryRun": false
+}
