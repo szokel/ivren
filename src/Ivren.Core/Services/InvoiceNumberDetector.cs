@@ -12,7 +12,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
     private static readonly InvoiceDetectionOptions DefaultDetectionOptions = new();
 
     private const string InvoiceLabelPattern =
-        @"invoice\s*number|invoice\s*no|szamlaszam|szamla\s*sorszama|szamla\s*szama|sorszam";
+        @"invoice\s*number|invoice\s*no|szamlaszam|szamla\s*sorszam|szamla\s*sorszama|szamla\s*szama|sorszam";
 
     private static readonly string[] XmlElementCandidates =
     [
@@ -105,6 +105,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
     [
         "szamlaszam",
         "szamlaszama",
+        "szamlasorszam",
         "szamlasorszama",
         "sorszam",
         "sorszama",
@@ -527,7 +528,7 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                 continue;
             }
 
-            if (NextCompactTokenLooksLikeLabelSuffix(tokens, tokenIndex + 1))
+            if (NextCompactTokenLooksLikeLabelSuffix(tokens, tokenIndex + 1, labelCandidate))
             {
                 return false;
             }
@@ -631,7 +632,10 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         return prefix.EndsWith("bank", StringComparison.Ordinal);
     }
 
-    private static bool NextCompactTokenLooksLikeLabelSuffix(IReadOnlyList<string> tokens, int startIndex)
+    private static bool NextCompactTokenLooksLikeLabelSuffix(
+        IReadOnlyList<string> tokens,
+        int startIndex,
+        string labelCandidate)
     {
         for (var index = startIndex; index < Math.Min(tokens.Count, startIndex + 3); index++)
         {
@@ -641,7 +645,10 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
                 continue;
             }
 
-            return compact.All(char.IsLetter);
+            return FragmentedInvoiceLabelCompacts.Any(label =>
+                label.Length > labelCandidate.Length
+                && label.StartsWith(labelCandidate, StringComparison.Ordinal)
+                && label[labelCandidate.Length..].StartsWith(compact, StringComparison.Ordinal));
         }
 
         return false;
@@ -871,7 +878,13 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         => FocusedInvoiceLabelRegex.IsMatch(normalizedToken);
 
     private static bool IsHungarianInvoiceNumberLabel(string normalizedToken)
-        => normalizedToken is "szamlaszam" or "szamla szam" or "szamla szama" or "szamla sorszama" or "sorszam";
+        => normalizedToken is "szamlaszam"
+            or "szamla szam"
+            or "szamla szama"
+            or "szamlasorszam"
+            or "szamla sorszam"
+            or "szamla sorszama"
+            or "sorszam";
 
     private static bool IsStrongExplicitInvoiceLabel(string normalizedToken)
         => normalizedToken.Contains("invoice number", StringComparison.Ordinal)
