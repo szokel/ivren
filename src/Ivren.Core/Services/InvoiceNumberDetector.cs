@@ -439,18 +439,17 @@ public sealed class InvoiceNumberDetector : IInvoiceNumberDetector
         }
 
         var precedingColumns = CountPrecedingTableColumns(tokens, labelIndex);
-        if (precedingColumns == 0)
+        if (precedingColumns > 0)
         {
-            return false;
+            var candidateIndex = labelEndIndex + 1 + precedingColumns;
+            if (candidateIndex < tokens.Count
+                && TryReadCandidateValue(tokens[candidateIndex], options, out invoiceNumber))
+            {
+                return true;
+            }
         }
 
-        var candidateIndex = labelEndIndex + 1 + precedingColumns;
-        if (candidateIndex >= tokens.Count)
-        {
-            return false;
-        }
-
-        return TryReadCandidateValue(tokens[candidateIndex], options, out invoiceNumber);
+        return TryReadCandidateValueFromAdjacentTokens(tokens, labelEndIndex + 1, 10, options, out invoiceNumber);
     }
 
     private static bool TryReadCandidateFromHungarianInvoiceHeaderTable(
